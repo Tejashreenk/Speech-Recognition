@@ -1,0 +1,5 @@
+numpy 
+scipy 
+os
+librosa
+matplolib
