@@ -48,26 +48,29 @@ class HMM:
     def forward(self, observations):
         T = len(observations)
         alpha = np.zeros((T, self.num_states))
-        # alpha[0, :] = self.initial_probs * multivariate_normal.pdf(observations[0], self.means[0], self.covariances[0])
-        alpha[0, :] = self.initial_probs * self.multivariate_normal_logpdf(observations[0], self.means[0], self.covariances[0])
+        alpha[0, :] = self.initial_probs * multivariate_normal.logpdf(observations[0], self.means[0], self.covariances[0])
+        # alpha[0, :] = self.initial_probs * self.multivariate_normal_logpdf(observations[0], self.means[0], self.covariances[0])
         
         for t in range(1, T):
             for j in range(self.num_states):
-                # alpha[t, j] = multivariate_normal.pdf(observations[t], self.means[j], self.covariances[j]) * np.dot(alpha[t-1, :], self.transitions[:, j])
-                alpha[t, j] = self.multivariate_normal_logpdf(observations[t], self.means[j], self.covariances[j]) * np.dot(alpha[t-1, :], self.transitions[:, j])
+                alpha[t, j] = multivariate_normal.logpdf(observations[t], self.means[j], self.covariances[j]) * np.dot(alpha[t-1, :], self.transitions[:, j])
+                # alpha[t, j] = self.multivariate_normal_logpdf(observations[t], self.means[j], self.covariances[j]) * np.dot(alpha[t-1, :], self.transitions[:, j])
         
         return alpha
-
-    def log_forward(self, observations):
+    
+    def forward_log(self, observations):
         T = len(observations)
-        log_alpha = np.full((T, self.num_states), -np.inf)
-        log_alpha[0, :] = np.log(self.initial_probs) + np.log(multivariate_normal.pdf(observations[0], self.means, self.covariances))
+        alpha = np.zeros((T, self.num_states))
+        alpha[0, :] = np.log(self.initial_probs) + multivariate_normal.logpdf(observations[0], self.means[0], self.covariances[0])
+        # alpha[0, :] = self.initial_probs * self.multivariate_normal_logpdf(observations[0], self.means[0], self.covariances[0])
         
         for t in range(1, T):
             for j in range(self.num_states):
-                log_alpha[t, j] = np.log(multivariate_normal.pdf(observations[t], self.means[j], self.covariances[j])) \
-                                + log_calc.log_add(log_alpha[t-1] + np.log(self.transitions[:, j]))
-        return log_alpha
+                log_sum = np.logaddexp.reduce(alpha[t-1, :] + np.log(self.transitions[:, j]))
+                alpha[t, j] = multivariate_normal.logpdf(observations[t], self.means[j], self.covariances[j]) + log_sum
+                # alpha[t, j] = self.multivariate_normal_logpdf(observations[t], self.means[j], self.covariances[j]) * np.dot(alpha[t-1, :], self.transitions[:, j])
+        
+        return alpha
 
     def backward(self, observations):
         T = len(observations)  # Total number of time steps
@@ -77,23 +80,39 @@ class HMM:
         for t in range(T-2, -1, -1):
             for i in range(self.num_states):
                 # Ensure correct mean and covariance are used
-                pdf_values = np.array([self.multivariate_normal_logpdf(observations[t+1], self.means[j], self.covariances[j]) for j in range(self.num_states)])
-                # pdf_values = np.array([multivariate_normal.pdf(observations[t+1], self.means[j], self.covariances[j]) for j in range(self.num_states)])
-                beta[t, i] = np.sum(self.transitions[i, :] * pdf_values * beta[t+1, :])
+                # pdf_values = np.array([self.multivariate_normal_logpdf(observations[t+1], self.means[j], self.covariances[j]) for j in range(self.num_states)])
+                pdf_values = np.array([multivariate_normal.logpdf(observations[t+1], self.means[j], self.covariances[j]) for j in range(self.num_states)])
+                beta[t, i] = log_calc.log_add_arr(self.transitions[i, :] * pdf_values * beta[t+1, :])
         
         return beta
 
-    def log_backward(self, observations):
-        T = len(observations)
-        log_beta = np.zeros((T, self.num_states))
-        log_beta[T-1, :] = 0  # log(1) is 0
-        
+    def log_add_exp(self, log_probs):
+        """Compute the log of the sum of exponentials of input elements."""
+        max_log_prob = np.max(log_probs)
+        return max_log_prob + np.log(np.sum(np.exp(log_probs - max_log_prob)))
+
+    def backward_log(self, observations):
+        T = len(observations)  # Total number of time steps
+        beta = np.zeros((T, self.num_states))
+        beta[T-1, :] = 0  # Initialize last step with log(1) = 0
+
         for t in range(T-2, -1, -1):
             for i in range(self.num_states):
-                log_probs = log_beta[t+1] + np.log(multivariate_normal.pdf(observations[t+1], self.means, self.covariances)) + np.log(self.transitions[i, :])
-                log_beta[t, i] = log_calc.log_add(log_probs)
-        return log_beta
-
+                # Compute log of the observation probabilities for each state
+                log_pdf_values = np.array([multivariate_normal.logpdf(observations[t+1], self.means[j], self.covariances[j]) for j in range(self.num_states)])
+                
+                # Compute log(beta[t+1, j]) for each state
+                log_beta_t1 = beta[t+1, :]
+                
+                # Compute log(alpha[t, i]) using log-space calculations
+                log_transitions = np.log(self.transitions[i, :])
+                log_terms = log_transitions + log_pdf_values + log_beta_t1
+                
+                # Use log-sum-exp to sum the terms in log space
+                beta[t, i] = self.log_add_exp(log_terms)
+        
+        return beta
+    
     def compute_gamma(self, alpha, beta):
         gamma = np.multiply(alpha, beta) / np.sum(np.multiply(alpha, beta), axis=0)
         return gamma
@@ -107,6 +126,35 @@ class HMM:
                 xi[i, :, t] = alpha[i, t] * self.A[i, :] * self.B[:, observations[t+1]] * beta[:, t+1] / denominator
         return xi
 
+    def compute_gamma_log(self, log_alpha, log_beta):
+        T, N = log_alpha.shape
+        log_gamma = np.zeros((T, N))
+
+        for t in range(T):
+            log_gamma[t, :] = log_alpha[t, :] + log_beta[t, :]
+            log_gamma[t, :] -= self.log_add_exp(log_gamma[t, :])
+
+        return log_gamma
+
+    def e_step_log(self, observations):
+        log_alpha = self.forward_log(observations)
+        log_beta = self.backward_log(observations)
+
+        T = len(observations)
+        log_gamma = self.compute_gamma_log(log_alpha, log_beta)
+        log_xi = np.zeros((T-1, self.num_states, self.num_states))
+
+        for t in range(T-1):
+            for i in range(self.num_states):
+                for j in range(self.num_states):
+                    log_prob_obs = multivariate_normal.logpdf(observations[t+1], self.means[j], self.covariances[j])
+                    log_xi[t, i, j] = log_alpha[t, i] + np.log(self.transitions[i, j]) + log_prob_obs + log_beta[t+1, j]
+            log_xi[t, :, :] -= self.log_add_exp(log_xi[t, :, :])
+
+        log_likelihood = self.log_add_exp(log_alpha[-1, :])
+
+        return log_gamma, log_xi, log_likelihood
+
     def e_step(self, observations):
         alpha = self.forward(observations)
         beta = self.backward(observations)
@@ -115,15 +163,47 @@ class HMM:
         gamma = np.zeros((T, self.num_states))
         xi = np.zeros((T-1, self.num_states, self.num_states))
         
-        likelihood = np.sum(alpha[-1, :])  # P(O|λ)
+        likelihood = self.log_add_exp(alpha[-1, :])  # P(O|λ)
+        likelihood = np.logaddexp(alpha[-1, :])  # P(O|λ)
         for t in range(T):
             gamma[t, :] = (alpha[t, :] * beta[t, :]) / likelihood
         
         for t in range(T-1):
-            # xi[t, :, :] = (np.outer(alpha[t, :], beta[t+1, :] * multivariate_normal.pdf(observations[t+1], self.means, self.covariances)) * self.transitions) / likelihood
-            xi[t, :, :] = (np.outer(alpha[t, :], beta[t+1, :] * self.multivariate_normal_logpdf(observations[t+1], self.means, self.covariances)) * self.transitions) / likelihood
+            xi[t, :, :] = (np.outer(alpha[t, :], beta[t+1, :] * multivariate_normal.logpdf(observations[t+1], self.means, self.covariances)) * self.transitions) / likelihood
+            # xi[t, :, :] = (np.outer(alpha[t, :], beta[t+1, :] * self.multivariate_normal_logpdf(observations[t+1], self.means, self.covariances)) * self.transitions) / likelihood
         
         return gamma, xi, likelihood
+
+    def m_step_log(self, observations, log_gamma, log_xi):
+        T = len(observations)
+
+        for i in range(self.num_states):
+            # Update initial probabilities in log space
+            self.initial_probs[i] = np.exp(log_gamma[0, i] - self.log_add_exp(log_gamma[0, :]))
+
+            # Update transition probabilities in log space
+            for j in range(self.num_states):
+                log_numerator = self.log_add_exp(log_xi[:, i, j])
+                log_denominator = self.log_add_exp(log_gamma[:-1, i])
+                self.transitions[i, j] = np.exp(log_numerator - log_denominator)
+
+            # Update means and covariances in log space
+            mask = log_gamma[:, i] > np.log(1e-6)  # To prevent division by zero
+            log_gamma_masked = log_gamma[mask, i]
+            masked_observations = observations[mask]
+
+            log_gamma_sum = self.log_add_exp(log_gamma_masked)
+            # Update means
+            log_weighted_sum = self.log_add_exp(log_gamma_masked[:, np.newaxis] + np.log(masked_observations))
+            self.means[i] = np.exp(log_weighted_sum - log_gamma_sum)
+
+            # Update covariances
+            diffs = masked_observations - self.means[i]
+            log_weighted_diff_sum = self.log_add_exp(log_gamma_masked[:, np.newaxis] + np.log(diffs**2))
+            self.covariances[i] = np.exp(log_weighted_diff_sum - log_gamma_sum)
+
+        # Ensure the transition matrix rows sum to 1
+        self.transitions = self.transitions / np.sum(self.transitions, axis=1, keepdims=True)
 
     def m_step(self, observations, gamma, xi):
         T = len(observations)
@@ -139,7 +219,7 @@ class HMM:
             self.covariances[i] = np.dot(gamma[mask, i] * diffs.T, diffs) / np.sum(gamma[mask, i])
     
     def log_likelihood(self, alpha):
-        return np.log(np.sum(alpha[-1, :]))
+        return self.log_add_exp(alpha[-1, :])
     
     def log_e_step(self, observations):
         log_alpha = self.log_forward(observations)
@@ -151,7 +231,7 @@ class HMM:
         xi = np.zeros((T-1, self.num_states, self.num_states))
         for t in range(T-1):
             log_xi_t = (log_alpha[t, :, np.newaxis] + np.log(self.transitions) +
-                        np.log(multivariate_normal.pdf(observations[t+1], self.means, self.covariances))[:, np.newaxis] +
+                        np.log(multivariate_normal.logpdf(observations[t+1], self.means, self.covariances))[:, np.newaxis] +
                         log_beta[t+1])
             xi[t] = np.exp(log_xi_t - log_calc.log_add(log_xi_t))
         
@@ -177,10 +257,10 @@ class HMM:
         prev_log_likelihood = -np.inf
 
         for iteration in range(max_iterations):
-            gamma, xi, likelihood = self.e_step(observations)
-            self.m_step(observations, gamma, xi)
+            gamma, xi, likelihood = self.e_step_log(observations)
+            self.m_step_log(observations, gamma, xi)
 
-            current_log_likelihood = self.log_likelihood(self.log_forward(observations))
+            current_log_likelihood = self.log_likelihood(self.forward_log(observations))
             print(f"Iteration {iteration}, Log Likelihood: {current_log_likelihood}")
 
             if np.abs(current_log_likelihood - prev_log_likelihood) < tolerance:
@@ -218,7 +298,7 @@ class HMM:
 # hmm.fit(observations)
 
 # Example integration with a dataset
-num_states = 4
+num_states = 3
 num_features = 13
 hmm = HMM(num_states, num_features)
 hmm.initialize_parameters()
@@ -245,6 +325,6 @@ for i in range(29):
 observations = np.array(features_arr[0])
 # print(observations[:,0].shape)
 # Running one iteration of EM
-gamma, xi, likelihood = hmm.e_step(observations[:,0])
-hmm.m_step(observations, gamma, xi)
-print("Log likelihood:", hmm.log_likelihood(hmm.log_forward(observations)))
+gamma, xi, likelihood = hmm.e_step_log(observations[:,0])
+hmm.m_step_log(observations, gamma, xi)
+print("Log likelihood:", hmm.log_likelihood(hmm.forward_log(observations)))

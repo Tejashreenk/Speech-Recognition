@@ -1,6 +1,6 @@
 import numpy as np
 import librosa
-from hmmlearn import hmm
+from my_hmmlearn import hmm
 from sklearn.preprocessing import StandardScaler
 import os
 import pickle
@@ -24,18 +24,19 @@ def extract_mfcc_calc(audio_path, sample_rate, n_mfcc=13):
 
 # Train HMM model
 def train_hmm(models, audio_files, labels, sample_rate):
+    print("Training started ...")
     for label in np.unique(labels):
         training_data = [extract_mfcc_calc(audio_files[i], sample_rate) for i in range(len(labels)) if labels[i] == label]
         lengths = [len(x) for x in training_data]
         training_data = np.vstack(training_data)
 
-        model = hmm.GaussianHMM(n_components=3, covariance_type='diag', n_iter=2000)
+        model = hmm.GaussianHMM(n_components=3, covariance_type='diag',tol=1e-4, n_iter=2000,implementation="scaling")
         model.fit(training_data, lengths)
         models[label] = model
 
         # Save the model
         model_dir = "SavedModels"
-        model_path = os.path.join(model_dir, f'{label}_hmm_model.pkl')
+        model_path = os.path.join(model_dir, f'{label}_hmm_model0206.pkl')
         with open(model_path, 'wb') as f:
             pickle.dump(model, f)
         print(f'Model for {label} saved at {model_path}')
@@ -61,6 +62,6 @@ models = {}
 train_hmm(models, audio_files, labels, sample_rate)
 
 # Recognize a new audio file
-new_audio_path = 'cleaned_audios//what_time_is_it_29.wav'
+new_audio_path = 'cleaned_audios/turn_off_the_lights_24.wav'
 recognized_label = recognize(models, new_audio_path, sample_rate)
 print(f'Recognized as: {recognized_label}')

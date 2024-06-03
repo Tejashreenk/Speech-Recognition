@@ -29,3 +29,21 @@ def log_add(a, b):
     else:
         # Step 5: Compute the full log-add operation (Equation 16)
         return b + math.log1p(math.exp(d))  # log1p(x) computes log(1 + x) more accurately for small x
+
+def log_add_arr(ip_arr):
+    """
+    Computes the log-add of two log-domain probabilities a and b using a stable numerical method.
+    
+    Steps:
+    1. Sort a and b so that a <= b.
+    2. Compute d = a - b.
+    3. Check the condition on d:
+       - If d < -log(-l0) (where l0 approximates -infinity), b is significantly larger than a.
+    4. If the condition is met, return b. If not, proceed to compute the full log-add.
+    
+    """
+    summation = 0
+    for value in ip_arr:
+        summation =  log_add(summation,value)
+
+    return  summation
