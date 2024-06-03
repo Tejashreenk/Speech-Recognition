@@ -1,6 +1,7 @@
 import numpy as np
 from scipy import special
 import math
+import warnings
 
 def normalize(a, axis=None):
     """
@@ -55,20 +56,10 @@ def log_normalize(a, axis=None):
         a -= a_lse
 
 
-def fill_covars(covars, covariance_type='full', n_components=1, n_features=1):
-    if covariance_type == 'full':
-        return covars
-    elif covariance_type == 'diag':
-        return np.array(list(map(np.diag, covars)))
-    elif covariance_type == 'tied':
-        return np.tile(covars, (n_components, 1, 1))
-    elif covariance_type == 'spherical':
-        # Regardless of what is passed in, we flatten in
-        # and then expand it to the correct shape
-        covars = np.ravel(covars)
-        eye = np.eye(n_features)[np.newaxis, :, :]
-        covars = covars[:, np.newaxis, np.newaxis]
-        return eye * covars
+def fill_covars(covars, n_components=1, n_features=1):
+    covars = np.array(list(map(np.diag, covars)))
+    print(covars)
+    return covars
 
 def log_add(a, b):
     """
@@ -207,8 +198,6 @@ def backward_log(startprob, transmat, log_frameprob):
 
     return bwdlattice
 
-import numpy as np
-
 def compute_scaling_xi_sum(fwdlattice, transmat, bwdlattice, frameprob):
     ns, nc = frameprob.shape
     if (fwdlattice.shape != (ns, nc) or 
@@ -275,3 +264,44 @@ def viterbi(log_startprob, log_transmat, log_frameprob):
 
     log_prob = np.max(viterbi_lattice[-1, :])
     return log_prob, state_sequence
+
+
+def logdet(a):
+    sign, logdet = np.linalg.slogdet(a)
+    if (sign < 0).any():
+        warnings.warn("invalid value encountered in log", RuntimeWarning)
+        return np.where(sign < 0, np.nan, logdet)
+    else:
+        return logdet
+
+
+def split_X_lengths(X, lengths):
+    if lengths is None:
+        return [X]
+    else:
+        cs = np.cumsum(lengths)
+        n_samples = len(X)
+        if cs[-1] != n_samples:
+            raise ValueError(
+                f"lengths array {lengths} doesn't sum to {n_samples} samples")
+        return np.split(X, cs)[:-1]
+
+
+# Copied from scikit-learn 0.19.
+def _validate_covars(covars, covariance_type, n_components):
+    """Do basic checks on matrix covariance sizes and values."""
+    
+    if len(covars.shape) != 2:
+        raise ValueError("'diag' covars must have shape "
+                            "(n_components, n_dim)")
+    elif np.any(covars <= 0):
+        raise ValueError("'diag' covars must be positive")
+
+
+# Copied from scikit-learn 0.19.
+def distribute_covar_matrix_to_match_covariance_type(
+        tied_cv, covariance_type, n_components):
+    if covariance_type == 'diag':
+        cv = np.tile(np.diag(tied_cv), (n_components, 1))
+
+    return cv

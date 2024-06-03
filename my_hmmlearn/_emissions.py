@@ -5,22 +5,6 @@ import numpy as np
 from .base import _AbstractHMM
 from .stats import log_multivariate_normal_density
 
-
-_CATEGORICALHMM_DOC_SUFFIX = """
-
-Notes
------
-Unlike other HMM classes, `CategoricalHMM` ``X`` arrays have shape
-``(n_samples, 1)`` (instead of ``(n_samples, n_features)``).  Consider using
-`sklearn.preprocessing.LabelEncoder` to transform your input to the right
-format.
-"""
-
-
-def _make_wrapper(func):
-    return functools.wraps(func)(lambda *args, **kwargs: func(*args, **kwargs))
-
-
 class BaseGaussianHMM(_AbstractHMM):
 
     def _get_n_fit_scalars_per_param(self):

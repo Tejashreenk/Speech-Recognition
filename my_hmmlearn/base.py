@@ -9,8 +9,6 @@ from sklearn.base import BaseEstimator
 from sklearn.utils.validation import (
     check_array, check_is_fitted, check_random_state)
 from . import utils 
-from . import _utils
-# from .utils import normalize, log_normalize
 
 
 _log = logging.getLogger(__name__)
@@ -258,7 +256,7 @@ class _AbstractHMM(BaseEstimator):
         """
         log_prob = 0
         sub_posteriors = [np.empty((0, self.n_components))]
-        for sub_X in _utils.split_X_lengths(X, lengths):
+        for sub_X in utils.split_X_lengths(X, lengths):
             log_frameprob = self._compute_log_likelihood(sub_X)
             log_probij, fwdlattice = utils.forward_log(
                 self.startprob_, self.transmat_, log_frameprob)
@@ -273,7 +271,7 @@ class _AbstractHMM(BaseEstimator):
     def _score_scaling(self, X, lengths=None, *, compute_posteriors):
         log_prob = 0
         sub_posteriors = [np.empty((0, self.n_components))]
-        for sub_X in _utils.split_X_lengths(X, lengths):
+        for sub_X in utils.split_X_lengths(X, lengths):
             frameprob = self._compute_likelihood(sub_X)
             log_probij, fwdlattice, scaling_factors = utils.forward_scaling(
                 self.startprob_, self.transmat_, frameprob)
@@ -347,7 +345,7 @@ class _AbstractHMM(BaseEstimator):
         X = check_array(X)
         log_prob = 0
         sub_state_sequences = []
-        for sub_X in _utils.split_X_lengths(X, lengths):
+        for sub_X in utils.split_X_lengths(X, lengths):
             # XXX decoder works on a single sample at a time!
             sub_log_prob, sub_state_sequence = decoder(sub_X)
             log_prob += sub_log_prob
@@ -760,7 +758,7 @@ class _AbstractHMM(BaseEstimator):
         stats = self._initialize_sufficient_statistics()
         self._estep_begin()
         curr_logprob = 0
-        for sub_X in _utils.split_X_lengths(X, lengths):
+        for sub_X in utils.split_X_lengths(X, lengths):
             lattice, logprob, posteriors, fwdlattice, bwdlattice = impl(sub_X)
             # Derived HMM classes will implement the following method to
             # update their probability distributions, so keep
@@ -975,54 +973,3 @@ class BaseHMM(_AbstractHMM):
             raise ValueError(
                 "transmat_ must have shape (n_components, n_components)")
         self._check_sum_1("transmat_")
-
-    def aic(self, X, lengths=None):
-        """
-        Akaike information criterion for the current model on the input X.
-
-        AIC = -2*logLike + 2 * num_free_params
-
-        https://en.wikipedia.org/wiki/Akaike_information_criterion
-
-        Parameters
-        ----------
-        X : array of shape (n_samples, n_dimensions)
-            The input samples.
-        lengths : array-like of integers, shape (n_sequences, )
-            Lengths of the individual sequences in ``X``. The sum of
-            these should be ``n_samples``.
-
-        Returns
-        -------
-        aic : float
-            The lower the better.
-        """
-        n_params = sum(self._get_n_fit_scalars_per_param().values())
-        return -2 * self.score(X, lengths=lengths) + 2 * n_params
-
-    def bic(self, X, lengths=None):
-        """
-        Bayesian information criterion for the current model on the input X.
-
-        BIC = -2*logLike + num_free_params * log(num_of_data)
-
-        https://en.wikipedia.org/wiki/Bayesian_information_criterion
-
-        Parameters
-        ----------
-        X : array of shape (n_samples, n_dimensions)
-            The input samples.
-        lengths : array-like of integers, shape (n_sequences, )
-            Lengths of the individual sequences in ``X``. The sum of
-            these should be ``n_samples``.
-
-        Returns
-        -------
-        bic : float
-            The lower the better.
-        """
-        n_params = sum(self._get_n_fit_scalars_per_param().values())
-        return -2 * self.score(X, lengths=lengths) + n_params * np.log(len(X))
-
-
-_BaseHMM = BaseHMM  # Backcompat name, will be deprecated in the future.

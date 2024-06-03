@@ -7,18 +7,9 @@ import logging
 import numpy as np
 from sklearn import cluster
 
-from . import _emissions, _utils
+from . import _emissions
 from .base import BaseHMM
-from .utils import fill_covars, normalize
-
-
-__all__ = [
-    "GMMHMM", "GaussianHMM", "CategoricalHMM", "MultinomialHMM", "PoissonHMM",
-]
-
-
-_log = logging.getLogger(__name__)
-COVARIANCE_TYPES = frozenset(("spherical", "diag", "full", "tied"))
+from my_hmmlearn import utils
 
 
 class GaussianHMM(_emissions.BaseGaussianHMM, BaseHMM):
@@ -73,16 +64,6 @@ class GaussianHMM(_emissions.BaseGaussianHMM, BaseHMM):
         ----------
         n_components : int
             Number of states.
-
-        covariance_type : {"spherical", "diag", "full", "tied"}, optional
-            The type of covariance parameters to use:
-
-            * "spherical" --- each state uses a single variance value that
-              applies to all features (default).
-            * "diag" --- each state uses a diagonal covariance matrix.
-            * "full" --- each state uses a full (i.e. unrestricted)
-              covariance matrix.
-            * "tied" --- all states use **the same** full covariance matrix.
 
         min_covar : float, optional
             Floor on the diagonal of the covariance matrix to prevent
@@ -160,13 +141,13 @@ class GaussianHMM(_emissions.BaseGaussianHMM, BaseHMM):
     @property
     def covars_(self):
         """Return covars as a full matrix."""
-        return fill_covars(self._covars_, self.covariance_type,
+        return utils.fill_covars(self._covars_, self.covariance_type,
                            self.n_components, self.n_features)
 
     @covars_.setter
     def covars_(self, covars):
         covars = np.array(covars, copy=True)
-        _utils._validate_covars(covars, self.covariance_type,
+        utils._validate_covars(covars, self.covariance_type,
                                 self.n_components)
         self._covars_ = covars
 
@@ -184,7 +165,7 @@ class GaussianHMM(_emissions.BaseGaussianHMM, BaseHMM):
             if not cv.shape:
                 cv.shape = (1, 1)
             self.covars_ = \
-                _utils.distribute_covar_matrix_to_match_covariance_type(
+                utils.distribute_covar_matrix_to_match_covariance_type(
                     cv, self.covariance_type, self.n_components).copy()
 
     def _check(self):
@@ -193,9 +174,6 @@ class GaussianHMM(_emissions.BaseGaussianHMM, BaseHMM):
         self.means_ = np.asarray(self.means_)
         self.n_features = self.means_.shape[1]
 
-        if self.covariance_type not in COVARIANCE_TYPES:
-            raise ValueError(
-                f"covariance_type must be one of {COVARIANCE_TYPES}")
 
     def _needs_sufficient_statistics_for_mean(self):
         return 'm' in self.params
@@ -223,32 +201,10 @@ class GaussianHMM(_emissions.BaseGaussianHMM, BaseHMM):
             covars_weight = self.covars_weight
             meandiff = self.means_ - means_prior
 
-            if self.covariance_type in ('spherical', 'diag'):
-                c_n = (means_weight * meandiff**2
-                       + stats['obs**2']
-                       - 2 * self.means_ * stats['obs']
-                       + self.means_**2 * denom)
-                c_d = max(covars_weight - 1, 0) + denom
-                self._covars_ = (covars_prior + c_n) / np.maximum(c_d, 1e-5)
-                if self.covariance_type == 'spherical':
-                    self._covars_ = np.tile(self._covars_.mean(1)[:, None],
-                                            (1, self._covars_.shape[1]))
-            elif self.covariance_type in ('tied', 'full'):
-                c_n = np.empty((self.n_components, self.n_features,
-                                self.n_features))
-                for c in range(self.n_components):
-                    obsmean = np.outer(stats['obs'][c], self.means_[c])
-                    c_n[c] = (means_weight * np.outer(meandiff[c],
-                                                      meandiff[c])
-                              + stats['obs*obs.T'][c]
-                              - obsmean - obsmean.T
-                              + np.outer(self.means_[c], self.means_[c])
-                              * stats['post'][c])
-                cvweight = max(covars_weight - self.n_features, 0)
-                if self.covariance_type == 'tied':
-                    self._covars_ = ((covars_prior + c_n.sum(axis=0)) /
-                                     (cvweight + stats['post'].sum()))
-                elif self.covariance_type == 'full':
-                    self._covars_ = ((covars_prior + c_n) /
-                                     (cvweight + stats['post'][:, None, None]))
-
+            c_n = (means_weight * meandiff**2
+                    + stats['obs**2']
+                    - 2 * self.means_ * stats['obs']
+                    + self.means_**2 * denom)
+            c_d = max(covars_weight - 1, 0) + denom
+            self._covars_ = (covars_prior + c_n) / np.maximum(c_d, 1e-5)
+           
