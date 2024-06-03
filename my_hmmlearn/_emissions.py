@@ -31,9 +31,6 @@ class BaseGaussianHMM(_AbstractHMM):
         stats['post'] = np.zeros(self.n_components)
         stats['obs'] = np.zeros((self.n_components, self.n_features))
         stats['obs**2'] = np.zeros((self.n_components, self.n_features))
-        if self.covariance_type in ('tied', 'full'):
-            stats['obs*obs.T'] = np.zeros((self.n_components, self.n_features,
-                                           self.n_features))
         return stats
 
     def _accumulate_sufficient_statistics(
@@ -49,13 +46,7 @@ class BaseGaussianHMM(_AbstractHMM):
             stats['obs'] += posteriors.T @ X
 
         if self._needs_sufficient_statistics_for_covars():
-            if self.covariance_type in ('spherical', 'diag'):
-                stats['obs**2'] += posteriors.T @ X**2
-            elif self.covariance_type in ('tied', 'full'):
-                # posteriors: (nt, nc); obs: (nt, nf); obs: (nt, nf)
-                # -> (nc, nf, nf)
-                stats['obs*obs.T'] += np.einsum(
-                    'ij,ik,il->jkl', posteriors, X, X)
+            stats['obs**2'] += posteriors.T @ X**2
 
     def _needs_sufficient_statistics_for_mean(self):
         """

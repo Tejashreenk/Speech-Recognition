@@ -8,7 +8,7 @@ from scipy import linalg, special
 from sklearn.base import BaseEstimator
 from sklearn.utils.validation import (
     check_array, check_is_fitted, check_random_state)
-from . import utils 
+from my_hmmlearn import utils
 
 
 _log = logging.getLogger(__name__)
