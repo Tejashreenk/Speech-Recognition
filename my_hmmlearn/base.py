@@ -178,6 +178,7 @@ class _AbstractHMM(BaseEstimator):
         self.implementation = implementation
         self.random_state = random_state
 
+    '''
     def score_samples(self, X, lengths=None):
         """
         Compute the log probability under the model and compute posteriors.
@@ -203,7 +204,7 @@ class _AbstractHMM(BaseEstimator):
         decode : Find most likely state sequence corresponding to ``X``.
         """
         return self._score(X, lengths, compute_posteriors=True)
-
+    '''
     def score(self, X, lengths=None):
         """
         Compute the log probability under the model.
@@ -285,15 +286,19 @@ class _AbstractHMM(BaseEstimator):
 
         return log_prob, np.concatenate(sub_posteriors)
 
+    
+    
     def _decode_viterbi(self, X):
         log_frameprob = self._compute_log_likelihood(X)
         return utils.viterbi(self.startprob_, self.transmat_, log_frameprob)
 
+    '''
     def _decode_map(self, X):
         _, posteriors = self.score_samples(X)
         log_prob = np.max(posteriors, axis=1).sum()
         state_sequence = np.argmax(posteriors, axis=1)
         return log_prob, state_sequence
+    '''
 
     def decode(self, X, lengths=None, algorithm=None):
         """
