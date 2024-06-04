@@ -8,6 +8,69 @@ import numpy as np
 from .base import BaseHMM
 from my_hmmlearn import utils
 from .stats import log_multivariate_normal_density
+from collections import deque
+import sys
+
+class ConvergenceMonitor:
+
+    _template = "{iter:>10d} {log_prob:>16.8f} {delta:>+16.8f}"
+
+    def __init__(self, tol, n_iter, verbose):
+        """
+        Parameters
+        ----------
+        tol : double
+            Convergence threshold.  EM has converged either if the maximum
+            number of iterations is reached or the log probability improvement
+            between the two consecutive iterations is less than threshold.
+        n_iter : int
+            Maximum number of iterations to perform.
+        verbose : bool
+            Whether per-iteration convergence reports are printed.
+        """
+        self.tol = tol
+        self.n_iter = n_iter
+        self.verbose = verbose
+        self.history = deque()
+        self.iter = 0
+
+    def __repr__(self):
+        class_name = self.__class__.__name__
+        params = sorted(dict(vars(self), history=list(self.history)).items())
+        return ("{}(\n".format(class_name)
+                + "".join(map("    {}={},\n".format, *zip(*params)))
+                + ")")
+
+    def _reset(self):
+        """Reset the monitor's state."""
+        self.iter = 0
+        self.history.clear()
+
+    def report(self, log_prob):
+        if self.verbose:
+            delta = log_prob - self.history[-1] if self.history else np.nan
+            message = self._template.format(
+                iter=self.iter + 1, log_prob=log_prob, delta=delta)
+            print(message, file=sys.stderr)
+
+        # Allow for some wiggleroom based on precision.
+        precision = np.finfo(float).eps ** (1/2)
+        if self.history and (log_prob - self.history[-1]) < -precision:
+            delta = log_prob - self.history[-1]
+            _log.warning(f"Model is not converging.  Current: {log_prob}"
+                         f" is not greater than {self.history[-1]}."
+                         f" Delta is {delta}")
+        self.history.append(log_prob)
+        self.iter += 1
+
+    @property
+    def converged(self):
+        """Whether the EM algorithm converged."""
+        # XXX we might want to check that ``log_prob`` is non-decreasing.
+        return (self.iter == self.n_iter or
+                (len(self.history) >= 2 and
+                 self.history[-1] - self.history[-2] < self.tol))
+
 
 
 class GaussianHMM(BaseHMM):
@@ -21,12 +84,18 @@ class GaussianHMM(BaseHMM):
                  n_iter=10, tol=1e-2, verbose=False,
                  implementation="log"):
         
-        super().__init__(n_components,
-                         startprob_prior=startprob_prior,
-                         transmat_prior=transmat_prior, algorithm=algorithm,
-                         random_state=random_state, n_iter=n_iter,
-                         tol=tol, verbose=verbose,
-                         implementation=implementation)
+        self.n_components = n_components
+        self.algorithm = algorithm
+        self.n_iter = n_iter
+        self.tol = tol
+        self.verbose = True
+        self.implementation = implementation
+        self.random_state = random_state
+        
+        self.startprob_prior = startprob_prior
+        self.transmat_prior = transmat_prior
+        self.monitor_ = ConvergenceMonitor(self.tol, self.n_iter, self.verbose)
+
         self.covariance_type = covariance_type
         self.min_covar = min_covar
         self.means_prior = means_prior

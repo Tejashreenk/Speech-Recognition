@@ -14,39 +14,6 @@ DECODER_ALGORITHMS = frozenset(("viterbi", "map"))
 
 
 class ConvergenceMonitor:
-    """
-    Monitor and report convergence to :data:`sys.stderr`.
-
-    Attributes
-    ----------
-    history : deque
-        The log probability of the data for the last two training
-        iterations. If the values are not strictly increasing, the
-        model did not converge.
-    iter : int
-        Number of iterations performed while training the model.
-
-    Examples
-    --------
-    Use custom convergence criteria by subclassing ``ConvergenceMonitor``
-    and redefining the ``converged`` method. The resulting subclass can
-    be used by creating an instance and pointing a model's ``monitor_``
-    attribute to it prior to fitting.
-
-    >>> from hmmlearn.base import ConvergenceMonitor
-    >>> from hmmlearn import hmm
-    >>>
-    >>> class ThresholdMonitor(ConvergenceMonitor):
-    ...     @property
-    ...     def converged(self):
-    ...         return (self.iter == self.n_iter or
-    ...                 self.history[-1] >= self.tol)
-    >>>
-    >>> model = hmm.GaussianHMM(n_components=2, tol=5, verbose=True)
-    >>> model.monitor_ = ThresholdMonitor(model.monitor_.tol,
-    ...                                   model.monitor_.n_iter,
-    ...                                   model.monitor_.verbose)
-    """
 
     _template = "{iter:>10d} {log_prob:>16.8f} {delta:>+16.8f}"
 
@@ -82,20 +49,6 @@ class ConvergenceMonitor:
         self.history.clear()
 
     def report(self, log_prob):
-        """
-        Report convergence to :data:`sys.stderr`.
-
-        The output consists of three columns: iteration number, log
-        probability of the data at the current iteration and convergence
-        rate.  At the first iteration convergence rate is unknown and
-        is thus denoted by NaN.
-
-        Parameters
-        ----------
-        log_prob : float
-            The log probability of the data as computed by EM algorithm
-            in the current iteration.
-        """
         if self.verbose:
             delta = log_prob - self.history[-1] if self.history else np.nan
             message = self._template.format(
@@ -166,8 +119,6 @@ class _AbstractHMM():
         """
 
         self.n_components = n_components
-        # self.params = params
-        # self.init_params = init_params
         self.algorithm = algorithm
         self.n_iter = n_iter
         self.tol = tol
@@ -719,16 +670,6 @@ class _AbstractHMM():
         with np.errstate(under="ignore"):
             stats['trans'] += np.exp(log_xi_sum)
 
-    def _do_mstep(self, stats):
-        """
-        Perform the M-step of EM algorithm.
-
-        Parameters
-        ----------
-        stats : dict
-            Sufficient statistics updated from all available samples.
-        """
-
     def _do_estep(self, X, lengths):
         impl = {
             "scaling": self._fit_scaling,
@@ -736,7 +677,6 @@ class _AbstractHMM():
         }[self.implementation]
 
         stats = self._initialize_sufficient_statistics()
-        self._estep_begin()
         curr_logprob = 0
         for sub_X in utils.split_X_lengths(X, lengths):
             lattice, logprob, posteriors, fwdlattice, bwdlattice = impl(sub_X)
@@ -749,8 +689,8 @@ class _AbstractHMM():
             curr_logprob += logprob
         return stats, curr_logprob
 
-    def _estep_begin(self):
-        pass
+    # def _estep_begin(self):
+    #     pass
 
     def _compute_lower_bound(self, curr_logprob):
         raise NotImplementedError("Must be overridden in subclass")
@@ -878,12 +818,10 @@ class BaseHMM(_AbstractHMM):
         # terms can just be set to zero.
         # The ``np.where`` calls guard against updating forbidden states
         # or transitions in e.g. a left-right HMM.
-        # if 's' in self.params:
         startprob_ = np.maximum(self.startprob_prior - 1 + stats['start'],
                                 0)
         self.startprob_ = np.where(self.startprob_ == 0, 0, startprob_)
         utils.normalize(self.startprob_)
-        # if 't' in self.params:
         transmat_ = np.maximum(self.transmat_prior - 1 + stats['trans'], 0)
         self.transmat_ = np.where(self.transmat_ == 0, 0, transmat_)
         utils.normalize(self.transmat_, axis=1)
@@ -903,10 +841,8 @@ class BaseHMM(_AbstractHMM):
         self._check_and_set_n_features(X)
         init = 1. / self.n_components
         random_state = np.random.mtrand._rand#check_random_state(self.random_state)
-        # if self._needs_init("s", "startprob_"):
         self.startprob_ = random_state.dirichlet(
             np.full(self.n_components, init))
-        # if self._needs_init("t", "transmat_"):
         self.transmat_ = random_state.dirichlet(
             np.full(self.n_components, init), size=self.n_components)
         n_fit_scalars_per_param = self._get_n_fit_scalars_per_param()

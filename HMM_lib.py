@@ -36,7 +36,7 @@ def train_hmm(models, audio_files, labels, sample_rate):
 
         # Save the model
         model_dir = "SavedModels"
-        model_path = os.path.join(model_dir, f'{label}_hmm_model0206.pkl')
+        model_path = os.path.join(model_dir, f'{label}_hmm_model0406.pkl')
         with open(model_path, 'wb') as f:
             pickle.dump(model, f)
         print(f'Model for {label} saved at {model_path}')
@@ -51,7 +51,7 @@ audio_files = []
 labels = []
 sample_rate = 22050
 directory = "cleaned_audios_3005"
-filenames = ["play_music","stop_music","turn_off_the_lights"]#,"turn_on_the_lights","what_time_is_it","odessa"]
+filenames = ["play_music","stop_music","turn_off_the_lights","turn_on_the_lights","what_time_is_it","odessa"]
 for filename in filenames:
     for i in range(29):
         audio_files.append(f"{directory}/{filename}_{i+1}.wav")
@@ -59,9 +59,27 @@ for filename in filenames:
 
 # Train models
 models = {}
-train_hmm(models, audio_files, labels, sample_rate)
+
+def load_models(model_dir='models'):
+    models = {}
+    for file in os.listdir(model_dir):
+        if file.endswith('_hmm_model0206.pkl'):
+            label = file.replace('_hmm_model0206.pkl', '')
+            model_path = os.path.join(model_dir, file)
+            with open(model_path, 'rb') as f:
+                models[label] = pickle.load(f)
+            print(f'Model for {label} loaded from {model_path}')
+    return models
+
+use_trained_models = False
+
+if use_trained_models:
+    loaded_models = load_models("SavedModels")
+else:
+    train_hmm(models, audio_files, labels, sample_rate)
+
 
 # Recognize a new audio file
-new_audio_path = 'cleaned_audios/stop_music_25.wav'
+new_audio_path = 'cleaned_audios/stop_music_2.wav'
 recognized_label = recognize(models, new_audio_path, sample_rate)
 print(f'Recognized as: {recognized_label}')
