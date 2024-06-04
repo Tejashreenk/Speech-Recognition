@@ -51,7 +51,7 @@ audio_files = []
 labels = []
 sample_rate = 22050
 directory = "cleaned_audios_3005"
-filenames = ["play_music","stop_music","turn_off_the_lights","turn_on_the_lights","what_time_is_it","odessa"]
+filenames = ["play_music","stop_music","turn_off_the_lights"]#,"turn_on_the_lights","what_time_is_it","odessa"]
 for filename in filenames:
     for i in range(29):
         audio_files.append(f"{directory}/{filename}_{i+1}.wav")
@@ -62,6 +62,6 @@ models = {}
 train_hmm(models, audio_files, labels, sample_rate)
 
 # Recognize a new audio file
-new_audio_path = 'cleaned_audios/turn_off_the_lights_24.wav'
+new_audio_path = 'cleaned_audios/stop_music_25.wav'
 recognized_label = recognize(models, new_audio_path, sample_rate)
 print(f'Recognized as: {recognized_label}')
