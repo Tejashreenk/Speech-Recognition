@@ -78,14 +78,14 @@ class MyGaussianHMM():
                  means_prior=0, means_weight=0,
                  covars_prior=1e-2, covars_weight=1,
                 random_state=None,
-                 n_iter=10, tol=1e-2, verbose=False,
+                 n_iter=10, tol=1e-2, verbose=True,
                  implementation="log"):
         
         # super().__init__( n_components=1, random_state=1,n_iter=10, tol=1e-2, verbose=False,implementation="log")
         self.n_components = n_components
         self.n_iter = n_iter
         self.tol = tol
-        self.verbose = True
+        self.verbose = verbose
         self.implementation = implementation
         self.random_state = random_state
         

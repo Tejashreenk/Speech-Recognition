@@ -600,8 +600,8 @@ def get_cleaned_audio(j,filename,directory):
 def load_models(model_dir='models'):
     models = {}
     for file in os.listdir(model_dir):
-        if file.endswith('_hmm_model_lib.pkl'):
-            label = file.replace('_hmm_model_lib.pkl', '')
+        if file.endswith('_hmm_model.pkl'):
+            label = file.replace('_hmm_model.pkl', '')
             model_path = os.path.join(model_dir, file)
             with open(model_path, 'rb') as f:
                 models[label] = pickle.load(f)
