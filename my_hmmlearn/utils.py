@@ -288,7 +288,7 @@ def split_X_lengths(X, lengths):
 
 
 # Copied from scikit-learn 0.19.
-def _validate_covars(covars, covariance_type, n_components):
+def validate_covars(covars, covariance_type, n_components):
     """Do basic checks on matrix covariance sizes and values."""
     
     if len(covars.shape) != 2:
