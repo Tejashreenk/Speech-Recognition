@@ -1,7 +1,6 @@
 import numpy as np
 import librosa
 from my_hmmlearn import hmm
-# from hmmlearn import hmm as hmm_lib
 from sklearn.preprocessing import StandardScaler
 import os
 import pickle
@@ -31,7 +30,7 @@ def train_hmm(models, audio_files, labels, sample_rate):
         lengths = [len(x) for x in training_data]
         training_data = np.vstack(training_data)
 
-        model = hmm.GaussianHMM(n_components=3,tol=1e-4, n_iter=2000,implementation="scaling")
+        model = hmm.MyGaussianHMM(n_components=3,tol=1e-4, n_iter=2000,implementation="scaling")
         model.fit(training_data, lengths)
         models[label] = model
 

@@ -5,9 +5,7 @@ The :mod:`hmmlearn.hmm` module implements hidden Markov models.
 import logging
 
 import numpy as np
-from .base import BaseHMM
 from my_hmmlearn import utils
-from .stats import log_multivariate_normal_density
 from collections import deque
 import sys
 
@@ -66,27 +64,25 @@ class ConvergenceMonitor:
     @property
     def converged(self):
         """Whether the EM algorithm converged."""
-        # XXX we might want to check that ``log_prob`` is non-decreasing.
         return (self.iter == self.n_iter or
                 (len(self.history) >= 2 and
                  self.history[-1] - self.history[-2] < self.tol))
 
 
 
-class GaussianHMM():
+class MyGaussianHMM():
    
     def __init__(self, n_components=1, covariance_type='diag',
                  min_covar=1e-3,
                  startprob_prior=1.0, transmat_prior=1.0,
                  means_prior=0, means_weight=0,
                  covars_prior=1e-2, covars_weight=1,
-                 algorithm="viterbi", random_state=None,
+                random_state=None,
                  n_iter=10, tol=1e-2, verbose=False,
                  implementation="log"):
         
         # super().__init__( n_components=1, random_state=1,n_iter=10, tol=1e-2, verbose=False,implementation="log")
         self.n_components = n_components
-        self.algorithm = algorithm
         self.n_iter = n_iter
         self.tol = tol
         self.verbose = True
@@ -126,16 +122,6 @@ class GaussianHMM():
             np.full(self.n_components, init))
         self.transmat_ = random_state.dirichlet(
             np.full(self.n_components, init), size=self.n_components)
-        n_fit_scalars_per_param = self.get_n_fit_scalars_per_param()
-        if n_fit_scalars_per_param is not None:
-            n_fit_scalars = sum(
-                n_fit_scalars_per_param[p] for p in "stmc")
-            if X.size < n_fit_scalars:
-                _log.warning(
-                    "Fitting a model with %d free scalar parameters with only "
-                    "%d data points will result in a degenerate solution.",
-                    n_fit_scalars, X.size)
-
 
         np.random.seed(self.random_state) 
         indices = np.random.choice(X.shape[0], self.n_components, replace=False)
@@ -148,26 +134,33 @@ class GaussianHMM():
                 cv, self.covariance_type, self.n_components).copy()
 
     def compute_log_likelihood(self, X):
-        return log_multivariate_normal_density(
-            X, self.means_, self._covars_, self.covariance_type)
+        likelihood = self._compute_likelihood(X)
+        with np.errstate(divide="ignore"):
+            return np.log(likelihood)
+
+        # return log_multivariate_normal_density(
+        #     X, self.means_, self._covars_, self.covariance_type)
 
     def compute_likelihood(self, X):
         """
         Compute per-component probability under the model.
 
-        Parameters
-        ----------
-        X : array-like, shape (n_samples, n_features)
-            Feature matrix of individual samples.
-
-        Returns
-        -------
-        log_prob : array, shape (n_samples, n_components)
-            Log probability of each sample in ``X`` for each of the
-            model states.
         """
-        
-        return np.exp(self.compute_log_likelihood(X))
+        sub_cll = self._log_multivariate_normal_density_diag(
+            X, self.means_, self._covars_)
+        with np.errstate(under="ignore"):
+            return np.exp(sub_cll)
+
+    def _log_multivariate_normal_density_diag(self, X, means, covars):
+        """Compute Gaussian log-density at X for a diagonal model."""
+        # X: (ns, nf); means: (nc, nf); covars: (nc, nf) -> (ns, nc)
+        nc, nf = means.shape
+        # Avoid 0 log 0 = nan in degenerate covariance case.
+        covars = np.maximum(covars, np.finfo(float).tiny)
+        with np.errstate(over="ignore"):
+            return -0.5 * (nf * np.log(2 * np.pi)
+                        + np.log(covars).sum(axis=-1)
+                        + ((X[:, None, :] - means) ** 2 / covars).sum(axis=-1))
 
     def do_mstep(self, stats):
         self.do_em_mstep(stats)
@@ -361,7 +354,7 @@ class GaussianHMM():
         stats['trans'] += xi_sum
 
 
-    def decode(self, X, lengths=None, algorithm=None):
+    def decode(self, X, lengths=None):
         """
         Find most likely state sequence corresponding to ``X``.
         """
@@ -414,80 +407,10 @@ class GaussianHMM():
         else:
             self.n_features = n_features
 
-    def get_n_fit_scalars_per_param(self):
-        nc = self.n_components
-        nf = self.n_features
-        return {
-            "s": nc - 1,
-            "t": nc * (nc - 1),
-            "m": nc * nf,
-            "c":  nc * nf,
-        }
-
-    # def compute_likelihood(self, X):
-    #     """
-    #     Compute per-component probability under the model.
-
-    #     Parameters
-    #     ----------
-    #     X : array-like, shape (n_samples, n_features)
-    #         Feature matrix of individual samples.
-
-    #     Returns
-    #     -------
-    #     log_prob : array, shape (n_samples, n_components)
-    #         Log probability of each sample in ``X`` for each of the
-    #         model states.
-    #     """
-    #     if (self._compute_log_likelihood  # prevent recursion
-    #             != __class__._compute_log_likelihood.__get__(self)):
-    #         # Probabilities equal to zero do occur, and exp(-LARGE) = 0 is OK.
-    #         with np.errstate(under="ignore"):
-    #             return np.exp(self._compute_log_likelihood(X))
-    #     else:
-    #         raise NotImplementedError("Must be overridden in subclass")
-
-    # def compute_log_likelihood(self, X):
-    #     """
-    #     Compute per-component emission log probability under the model.
-
-    #     Parameters
-    #     ----------
-    #     X : array-like, shape (n_samples, n_features)
-    #         Feature matrix of individual samples.
-
-    #     Returns
-    #     -------
-    #     log_prob : array, shape (n_samples, n_components)
-    #         Emission log probability of each sample in ``X`` for each of the
-    #         model states, i.e., ``log(p(X|state))``.
-    #     """
-    #     if (self._compute_likelihood  # prevent recursion
-    #             != __class__._compute_likelihood.__get__(self)):
-    #         # Probabilities equal to zero do occur, and log(0) = -inf is OK.
-    #         likelihood = self._compute_likelihood(X)
-    #         with np.errstate(divide="ignore"):
-    #             return np.log(likelihood)
-    #     else:
-    #         raise NotImplementedError("Must be overridden in subclass")
 
     def generate_sample_from_state(self, state, random_state):
         """
         Generate a random sample from a given component.
-
-        Parameters
-        ----------
-        state : int
-            Index of the component to condition on.
-        random_state: RandomState
-            A random number generator instance.  (`sample` is the only caller
-            for this method and already normalizes *random_state*.)
-
-        Returns
-        -------
-        X : array, shape (n_features, )
-            A random sample from the emission distribution corresponding
-            to a given component.
         """
         return random_state.multivariate_normal(
             self.means_[state], self.covars_[state]
@@ -512,11 +435,6 @@ class GaussianHMM():
     def do_em_mstep(self, stats):
         """
         Perform the M-step of EM algorithm.
-
-        Parameters
-        ----------
-        stats : dict
-            Sufficient statistics updated from all available samples.
         """
         # If a prior is < 1, `prior - 1 + starts['start']` can be negative.  In
         # that case maximization of (n1+e1) log p1 + ... + (ns+es) log ps under
