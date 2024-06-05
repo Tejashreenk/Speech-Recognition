@@ -77,7 +77,7 @@ def load_models(model_dir='models'):
                 print(f'Model for {label} loaded from {model_path}')
     return models
 
-use_trained_models = False
+use_trained_models = True
 
 if use_trained_models:
     models = load_models("SavedModels")
@@ -86,6 +86,6 @@ else:
 
 
 # Recognize a new audio file
-new_audio_path = 'cleaned_audios/start_music_2.wav'
+new_audio_path = 'cleaned_audios/play_music_2.wav'
 recognized_label = recognize(models, new_audio_path, sample_rate)
 print(f'Recognized as: {recognized_label}')

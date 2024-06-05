@@ -10,8 +10,6 @@ from my_hmmlearn import utils
 
 _log = logging.getLogger(__name__)
 #: Supported decoder algorithms.
-DECODER_ALGORITHMS = frozenset(("viterbi", "map"))
-
 
 class ConvergenceMonitor:
 
@@ -80,13 +78,10 @@ class BaseHMM():
     Base class for Hidden Markov Models learned via Expectation-Maximization
     and Variational Bayes.
     """
-
     def __init__(self, n_components, algorithm, random_state, n_iter,
                  tol, verbose, implementation):
         """
-        Parameters
-        ----------
-        n_components : int
+            n_components : int
             Number of states in the model.
         algorithm : {"viterbi", "map"}, optional
             Decoder algorithm.
@@ -127,32 +122,33 @@ class BaseHMM():
         self.implementation = implementation
         self.random_state = random_state
 
-    def score(self, X, lengths=None):
+    def _init(self, X, lengths=None):
         """
-        Compute the log probability under the model.
+        Initialize model parameters prior to fitting.
 
         Parameters
         ----------
         X : array-like, shape (n_samples, n_features)
             Feature matrix of individual samples.
-        lengths : array-like of integers, shape (n_sequences, ), optional
-            Lengths of the individual sequences in ``X``. The sum of
-            these should be ``n_samples``.
-
-        Returns
-        -------
-        log_prob : float
-            Log likelihood of ``X``.
-
-        See Also
-        --------
-        score_samples : Compute the log probability under the model and
-            posteriors.
-        decode : Find most likely state sequence corresponding to ``X``.
         """
-        return self._score(X, lengths, compute_posteriors=False)[0]
+        self._check_and_set_n_features(X)
+        init = 1. / self.n_components
+        random_state = np.random.mtrand._rand#check_random_state(self.random_state)
+        self.startprob_ = random_state.dirichlet(
+            np.full(self.n_components, init))
+        self.transmat_ = random_state.dirichlet(
+            np.full(self.n_components, init), size=self.n_components)
+        n_fit_scalars_per_param = self._get_n_fit_scalars_per_param()
+        if n_fit_scalars_per_param is not None:
+            n_fit_scalars = sum(
+                n_fit_scalars_per_param[p] for p in "stmc")
+            if X.size < n_fit_scalars:
+                _log.warning(
+                    "Fitting a model with %d free scalar parameters with only "
+                    "%d data points will result in a degenerate solution.",
+                    n_fit_scalars, X.size)
 
-    def _score(self, X, lengths=None, *, compute_posteriors):
+    def score(self, X, lengths=None, *, compute_posteriors=False):
         """
         Helper for `score` and `score_samples`.
 
@@ -160,17 +156,129 @@ class BaseHMM():
         *compute_posteriors* is True (otherwise, an empty array is returned
         for the latter).
         """
-        # check_is_fitted(self, "startprob_")
-        # self._check()
-
-        # X = check_array(X)
         impl = {
             "scaling": self._score_scaling,
             "log": self._score_log,
         }[self.implementation]
-        return impl(
+        score = impl(
             X=X, lengths=lengths, compute_posteriors=compute_posteriors)
+        return score[0]
+    
+    def fit(self, X, lengths=None):
+        """
+        Estimate model parameters.
 
+        An initialization step is performed before entering the
+        EM algorithm. If you want to avoid this step for a subset of
+        the parameters, pass proper ``init_params`` keyword argument
+        to estimator's constructor.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            Feature matrix of individual samples.
+        lengths : array-like of integers, shape (n_sequences, )
+            Lengths of the individual sequences in ``X``. The sum of
+            these should be ``n_samples``.
+
+        Returns
+        -------
+        self : object
+            Returns self.
+        """
+
+        if lengths is None:
+            lengths = np.asarray([X.shape[0]])
+
+        self._init(X, lengths)
+        self.monitor_._reset()
+
+        for iter in range(self.n_iter):
+            stats, curr_logprob = self._do_estep(X, lengths)
+            # Compute lower bound before updating model parameters
+            lower_bound = curr_logprob
+
+            # XXX must be before convergence check, because otherwise
+            #     there won't be any updates for the case ``n_iter=1``.
+            self._do_mstep(stats)
+            self.monitor_.report(lower_bound)
+
+            if self.monitor_.converged:
+                break
+
+            if (self.transmat_.sum(axis=1) == 0).any():
+                _log.warning("Some rows of transmat_ have zero sum because no "
+                             "transition from the state was ever observed.")
+        return self
+
+    def _initialize_sufficient_statistics(self):
+        """
+        Initialize sufficient statistics required for M-step.
+
+        The method is *pure*, meaning that it doesn't change the state of
+        the instance.  For extensibility computed statistics are stored
+        in a dictionary.
+
+        Returns
+        -------
+        nobs : int
+            Number of samples in the data.
+        start : array, shape (n_components, )
+            An array where the i-th element corresponds to the posterior
+            probability of the first sample being generated by the i-th state.
+        trans : array, shape (n_components, n_components)
+            An array where the (i, j)-th element corresponds to the posterior
+            probability of transitioning between the i-th to j-th states.
+        """
+        stats = {'nobs': 0,
+                 'start': np.zeros(self.n_components),
+                 'trans': np.zeros((self.n_components, self.n_components)),
+                 'post' : np.zeros(self.n_components),
+                 'obs' : np.zeros((self.n_components, self.n_features)),
+                 'obs**2' : np.zeros((self.n_components, self.n_features))
+                 }
+        return stats
+
+    def _accumulate_sufficient_statistics(
+            self, stats, X, lattice, posteriors, fwdlattice, bwdlattice):
+        """
+        Update sufficient statistics from a given sample.
+
+        Parameters
+        ----------
+        stats : dict
+            Sufficient statistics as returned by
+            :meth:`~.BaseHMM._initialize_sufficient_statistics`.
+
+        X : array, shape (n_samples, n_features)
+            Sample sequence.
+
+        lattice : array, shape (n_samples, n_components)
+            Probabilities OR Log Probabilities of each sample
+            under each of the model states.  Depends on the choice
+            of implementation of the Forward-Backward algorithm
+
+        posteriors : array, shape (n_samples, n_components)
+            Posterior probabilities of each sample being generated by each
+            of the model states.
+
+        fwdlattice, bwdlattice : array, shape (n_samples, n_components)
+            forward and backward probabilities.
+        """
+        stats['post'] += posteriors.sum(axis=0)
+        stats['obs'] += posteriors.T @ X
+        stats['obs**2'] += posteriors.T @ X**2
+
+        impl = {
+            "scaling": self._accumulate_sufficient_statistics_scaling,
+            "log": self._accumulate_sufficient_statistics_log,
+        }[self.implementation]
+
+        return impl(stats=stats, X=X, lattice=lattice, posteriors=posteriors,
+                    fwdlattice=fwdlattice, bwdlattice=bwdlattice)
+
+
+    # Log Calculations
     def _score_log(self, X, lengths=None, *, compute_posteriors):
         """
         Compute the log probability under the model, as well as posteriors if
@@ -191,6 +299,44 @@ class BaseHMM():
                     self._compute_posteriors_log(fwdlattice, bwdlattice))
         return log_prob, np.concatenate(sub_posteriors)
 
+    def _compute_posteriors_log(self, fwdlattice, bwdlattice):
+        # gamma is guaranteed to be correctly normalized by log_prob at
+        # all frames, unless we do approximate inference using pruning.
+        # So, we will normalize each frame explicitly in case we
+        # pruned too aggressively.
+        log_gamma = fwdlattice + bwdlattice
+        utils.log_normalize(log_gamma, axis=1)
+        with np.errstate(under="ignore"):
+            return np.exp(log_gamma)
+
+    def _fit_log(self, X):
+        log_frameprob = self._compute_log_likelihood(X)
+        log_prob, fwdlattice = utils.forward_log(
+            self.startprob_, self.transmat_, log_frameprob)
+        bwdlattice = utils.backward_log(
+            self.startprob_, self.transmat_, log_frameprob)
+        posteriors = self._compute_posteriors_log(fwdlattice, bwdlattice)
+        return log_frameprob, log_prob, posteriors, fwdlattice, bwdlattice
+   
+    def _accumulate_sufficient_statistics_log(
+            self, stats, X, lattice, posteriors, fwdlattice, bwdlattice):
+        """
+        Implementation of `_accumulate_sufficient_statistics`
+        for ``implementation = "log"``.
+        """
+        stats['nobs'] += 1
+        stats['start'] += posteriors[0]
+        n_samples, n_components = lattice.shape
+        # when the sample is of length 1, it contains no transitions
+        # so there is no reason to update our trans. matrix estimate
+        if n_samples <= 1:
+            return
+        log_xi_sum = utils.compute_log_xi_sum(
+            fwdlattice, self.transmat_, bwdlattice, lattice)
+        with np.errstate(under="ignore"):
+            stats['trans'] += np.exp(log_xi_sum)
+
+# Scaling Calculations
     def _score_scaling(self, X, lengths=None, *, compute_posteriors):
         log_prob = 0
         sub_posteriors = [np.empty((0, self.n_components))]
@@ -208,11 +354,37 @@ class BaseHMM():
 
         return log_prob, np.concatenate(sub_posteriors)
 
-    
-    
-    def _decode_viterbi(self, X):
-        log_frameprob = self._compute_log_likelihood(X)
-        return utils.viterbi(self.startprob_, self.transmat_, log_frameprob)
+    def _compute_posteriors_scaling(self, fwdlattice, bwdlattice):
+        posteriors = fwdlattice * bwdlattice
+        utils.normalize(posteriors, axis=1)
+        return posteriors
+
+    def _fit_scaling(self, X):
+        frameprob = self._compute_likelihood(X)
+        log_prob, fwdlattice, scaling_factors = utils.forward_scaling(
+            self.startprob_, self.transmat_, frameprob)
+        bwdlattice = utils.backward_scaling(
+            self.startprob_, self.transmat_, frameprob, scaling_factors)
+        posteriors = self._compute_posteriors_scaling(fwdlattice, bwdlattice)
+        return frameprob, log_prob, posteriors, fwdlattice, bwdlattice
+
+    def _accumulate_sufficient_statistics_scaling(
+            self, stats, X, lattice, posteriors, fwdlattice, bwdlattice):
+        """
+        Implementation of `_accumulate_sufficient_statistics`
+        for ``implementation = "log"``.
+        """
+        stats['nobs'] += 1
+        stats['start'] += posteriors[0]
+        n_samples, n_components = lattice.shape
+        # when the sample is of length 1, it contains no transitions
+        # so there is no reason to update our trans. matrix estimate
+        if n_samples <= 1:
+            return
+        xi_sum = utils.compute_scaling_xi_sum(
+            fwdlattice, self.transmat_, bwdlattice, lattice)
+        stats['trans'] += xi_sum
+
 
     def decode(self, X, lengths=None, algorithm=None):
         """
@@ -313,81 +485,6 @@ class BaseHMM():
 
         return np.atleast_2d(X), np.array(state_sequence, dtype=int)
 
-    def fit(self, X, lengths=None):
-        """
-        Estimate model parameters.
-
-        An initialization step is performed before entering the
-        EM algorithm. If you want to avoid this step for a subset of
-        the parameters, pass proper ``init_params`` keyword argument
-        to estimator's constructor.
-
-        Parameters
-        ----------
-        X : array-like, shape (n_samples, n_features)
-            Feature matrix of individual samples.
-        lengths : array-like of integers, shape (n_sequences, )
-            Lengths of the individual sequences in ``X``. The sum of
-            these should be ``n_samples``.
-
-        Returns
-        -------
-        self : object
-            Returns self.
-        """
-
-        if lengths is None:
-            lengths = np.asarray([X.shape[0]])
-
-        self._init(X, lengths)
-        self.monitor_._reset()
-
-        for iter in range(self.n_iter):
-            stats, curr_logprob = self._do_estep(X, lengths)
-            # Compute lower bound before updating model parameters
-            lower_bound = curr_logprob
-
-            # XXX must be before convergence check, because otherwise
-            #     there won't be any updates for the case ``n_iter=1``.
-            self._do_mstep(stats)
-            self.monitor_.report(lower_bound)
-
-            if self.monitor_.converged:
-                break
-
-            if (self.transmat_.sum(axis=1) == 0).any():
-                _log.warning("Some rows of transmat_ have zero sum because no "
-                             "transition from the state was ever observed.")
-        return self
-
-    def _compute_posteriors_scaling(self, fwdlattice, bwdlattice):
-        posteriors = fwdlattice * bwdlattice
-        utils.normalize(posteriors, axis=1)
-        return posteriors
-
-    def _compute_posteriors_log(self, fwdlattice, bwdlattice):
-        # gamma is guaranteed to be correctly normalized by log_prob at
-        # all frames, unless we do approximate inference using pruning.
-        # So, we will normalize each frame explicitly in case we
-        # pruned too aggressively.
-        log_gamma = fwdlattice + bwdlattice
-        utils.log_normalize(log_gamma, axis=1)
-        with np.errstate(under="ignore"):
-            return np.exp(log_gamma)
-
-    # def _needs_init(self, code, name):
-    #     # if code in self.init_params:
-    #     if True:
-    #         if hasattr(self, name):
-    #             _log.warning(
-    #                 "Even though the %r attribute is set, it will be "
-    #                 "overwritten during initialization because 'init_params' "
-    #                 "contains %r", name, code)
-    #         return True
-    #     if not hasattr(self, name):
-    #         return True
-    #     return False
-
     def _check_and_set_n_features(self, X):
         _, n_features = X.shape
         if hasattr(self, "n_features"):
@@ -477,107 +574,6 @@ class BaseHMM():
             self.means_[state], self.covars_[state]
         )
 
-    def _initialize_sufficient_statistics(self):
-        """
-        Initialize sufficient statistics required for M-step.
-
-        The method is *pure*, meaning that it doesn't change the state of
-        the instance.  For extensibility computed statistics are stored
-        in a dictionary.
-
-        Returns
-        -------
-        nobs : int
-            Number of samples in the data.
-        start : array, shape (n_components, )
-            An array where the i-th element corresponds to the posterior
-            probability of the first sample being generated by the i-th state.
-        trans : array, shape (n_components, n_components)
-            An array where the (i, j)-th element corresponds to the posterior
-            probability of transitioning between the i-th to j-th states.
-        """
-        stats = {'nobs': 0,
-                 'start': np.zeros(self.n_components),
-                 'trans': np.zeros((self.n_components, self.n_components)),
-                 'post' : np.zeros(self.n_components),
-                 'obs' : np.zeros((self.n_components, self.n_features)),
-                 'obs**2' : np.zeros((self.n_components, self.n_features))
-                 }
-        return stats
-
-    def _accumulate_sufficient_statistics(
-            self, stats, X, lattice, posteriors, fwdlattice, bwdlattice):
-        """
-        Update sufficient statistics from a given sample.
-
-        Parameters
-        ----------
-        stats : dict
-            Sufficient statistics as returned by
-            :meth:`~.BaseHMM._initialize_sufficient_statistics`.
-
-        X : array, shape (n_samples, n_features)
-            Sample sequence.
-
-        lattice : array, shape (n_samples, n_components)
-            Probabilities OR Log Probabilities of each sample
-            under each of the model states.  Depends on the choice
-            of implementation of the Forward-Backward algorithm
-
-        posteriors : array, shape (n_samples, n_components)
-            Posterior probabilities of each sample being generated by each
-            of the model states.
-
-        fwdlattice, bwdlattice : array, shape (n_samples, n_components)
-            forward and backward probabilities.
-        """
-        stats['post'] += posteriors.sum(axis=0)
-        stats['obs'] += posteriors.T @ X
-        stats['obs**2'] += posteriors.T @ X**2
-
-        impl = {
-            "scaling": self._accumulate_sufficient_statistics_scaling,
-            "log": self._accumulate_sufficient_statistics_log,
-        }[self.implementation]
-
-        return impl(stats=stats, X=X, lattice=lattice, posteriors=posteriors,
-                    fwdlattice=fwdlattice, bwdlattice=bwdlattice)
-
-    def _accumulate_sufficient_statistics_scaling(
-            self, stats, X, lattice, posteriors, fwdlattice, bwdlattice):
-        """
-        Implementation of `_accumulate_sufficient_statistics`
-        for ``implementation = "log"``.
-        """
-        stats['nobs'] += 1
-        stats['start'] += posteriors[0]
-        n_samples, n_components = lattice.shape
-        # when the sample is of length 1, it contains no transitions
-        # so there is no reason to update our trans. matrix estimate
-        if n_samples <= 1:
-            return
-        xi_sum = utils.compute_scaling_xi_sum(
-            fwdlattice, self.transmat_, bwdlattice, lattice)
-        stats['trans'] += xi_sum
-
-    def _accumulate_sufficient_statistics_log(
-            self, stats, X, lattice, posteriors, fwdlattice, bwdlattice):
-        """
-        Implementation of `_accumulate_sufficient_statistics`
-        for ``implementation = "log"``.
-        """
-        stats['nobs'] += 1
-        stats['start'] += posteriors[0]
-        n_samples, n_components = lattice.shape
-        # when the sample is of length 1, it contains no transitions
-        # so there is no reason to update our trans. matrix estimate
-        if n_samples <= 1:
-            return
-        log_xi_sum = utils.compute_log_xi_sum(
-            fwdlattice, self.transmat_, bwdlattice, lattice)
-        with np.errstate(under="ignore"):
-            stats['trans'] += np.exp(log_xi_sum)
-
     def _do_estep(self, X, lengths):
         impl = {
             "scaling": self._fit_scaling,
@@ -593,24 +589,6 @@ class BaseHMM():
                 bwdlattice)
             curr_logprob += logprob
         return stats, curr_logprob
-
-    def _fit_scaling(self, X):
-        frameprob = self._compute_likelihood(X)
-        log_prob, fwdlattice, scaling_factors = utils.forward_scaling(
-            self.startprob_, self.transmat_, frameprob)
-        bwdlattice = utils.backward_scaling(
-            self.startprob_, self.transmat_, frameprob, scaling_factors)
-        posteriors = self._compute_posteriors_scaling(fwdlattice, bwdlattice)
-        return frameprob, log_prob, posteriors, fwdlattice, bwdlattice
-
-    def _fit_log(self, X):
-        log_frameprob = self._compute_log_likelihood(X)
-        log_prob, fwdlattice = utils.forward_log(
-            self.startprob_, self.transmat_, log_frameprob)
-        bwdlattice = utils.backward_log(
-            self.startprob_, self.transmat_, log_frameprob)
-        posteriors = self._compute_posteriors_log(fwdlattice, bwdlattice)
-        return log_frameprob, log_prob, posteriors, fwdlattice, bwdlattice
 
     def _do_mstep(self, stats):
         """
@@ -635,34 +613,6 @@ class BaseHMM():
         self.transmat_ = np.where(self.transmat_ == 0, 0, transmat_)
         utils.normalize(self.transmat_, axis=1)
 
-    # def _compute_lower_bound(self, curr_logprob):
-    #     return curr_logprob
-
-    def _init(self, X, lengths=None):
-        """
-        Initialize model parameters prior to fitting.
-
-        Parameters
-        ----------
-        X : array-like, shape (n_samples, n_features)
-            Feature matrix of individual samples.
-        """
-        self._check_and_set_n_features(X)
-        init = 1. / self.n_components
-        random_state = np.random.mtrand._rand#check_random_state(self.random_state)
-        self.startprob_ = random_state.dirichlet(
-            np.full(self.n_components, init))
-        self.transmat_ = random_state.dirichlet(
-            np.full(self.n_components, init), size=self.n_components)
-        n_fit_scalars_per_param = self._get_n_fit_scalars_per_param()
-        if n_fit_scalars_per_param is not None:
-            n_fit_scalars = sum(
-                n_fit_scalars_per_param[p] for p in "stmc")
-            if X.size < n_fit_scalars:
-                _log.warning(
-                    "Fitting a model with %d free scalar parameters with only "
-                    "%d data points will result in a degenerate solution.",
-                    n_fit_scalars, X.size)
 
     def _check_sum_1(self, name):
         """Check that an array describes one or more distributions."""
@@ -695,52 +645,3 @@ class BaseHMM():
             raise ValueError(
                 "transmat_ must have shape (n_components, n_components)")
         self._check_sum_1("transmat_")
-
-    # def aic(self, X, lengths=None):
-    #     """
-    #     Akaike information criterion for the current model on the input X.
-
-    #     AIC = -2*logLike + 2 * num_free_params
-
-    #     https://en.wikipedia.org/wiki/Akaike_information_criterion
-
-    #     Parameters
-    #     ----------
-    #     X : array of shape (n_samples, n_dimensions)
-    #         The input samples.
-    #     lengths : array-like of integers, shape (n_sequences, )
-    #         Lengths of the individual sequences in ``X``. The sum of
-    #         these should be ``n_samples``.
-
-    #     Returns
-    #     -------
-    #     aic : float
-    #         The lower the better.
-    #     """
-    #     n_params = sum(self._get_n_fit_scalars_per_param().values())
-    #     return -2 * self.score(X, lengths=lengths) + 2 * n_params
-
-    # def bic(self, X, lengths=None):
-    #     """
-    #     Bayesian information criterion for the current model on the input X.
-
-    #     BIC = -2*logLike + num_free_params * log(num_of_data)
-
-    #     https://en.wikipedia.org/wiki/Bayesian_information_criterion
-
-    #     Parameters
-    #     ----------
-    #     X : array of shape (n_samples, n_dimensions)
-    #         The input samples.
-    #     lengths : array-like of integers, shape (n_sequences, )
-    #         Lengths of the individual sequences in ``X``. The sum of
-    #         these should be ``n_samples``.
-
-    #     Returns
-    #     -------
-    #     bic : float
-    #         The lower the better.
-    #     """
-    #     n_params = sum(self._get_n_fit_scalars_per_param().values())
-    #     return -2 * self.score(X, lengths=lengths) + n_params * np.log(len(X))
-
