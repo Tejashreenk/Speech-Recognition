@@ -74,7 +74,8 @@ class ConvergenceMonitor:
                  self.history[-1] - self.history[-2] < self.tol))
 
 
-class _AbstractHMM():
+# class _AbstractHMM():
+class BaseHMM():
     """
     Base class for Hidden Markov Models learned via Expectation-Maximization
     and Variational Bayes.
@@ -213,14 +214,6 @@ class _AbstractHMM():
         log_frameprob = self._compute_log_likelihood(X)
         return utils.viterbi(self.startprob_, self.transmat_, log_frameprob)
 
-    '''
-    def _decode_map(self, X):
-        _, posteriors = self.score_samples(X)
-        log_prob = np.max(posteriors, axis=1).sum()
-        state_sequence = np.argmax(posteriors, axis=1)
-        return log_prob, state_sequence
-    '''
-
     def decode(self, X, lengths=None, algorithm=None):
         """
         Find most likely state sequence corresponding to ``X``.
@@ -256,19 +249,10 @@ class _AbstractHMM():
             posteriors.
         score : Compute the log probability under the model.
         """
-        # check_is_fitted(self, "startprob_")
-        # self._check()
 
-        algorithm = algorithm or self.algorithm
-        if algorithm not in DECODER_ALGORITHMS:
-            raise ValueError(f"Unknown decoder {algorithm!r}")
+        log_frameprob = self._compute_log_likelihood(X)
 
-        decoder = {
-            "viterbi": self._decode_viterbi,
-            "map": self._decode_map
-        }[algorithm]
-
-        # X = check_array(X)
+        decoder = utils.viterbi(self.startprob_, self.transmat_, log_frameprob)
         log_prob = 0
         sub_state_sequences = []
         for sub_X in utils.split_X_lengths(X, lengths):
@@ -278,46 +262,6 @@ class _AbstractHMM():
             sub_state_sequences.append(sub_state_sequence)
 
         return log_prob, np.concatenate(sub_state_sequences)
-
-    def predict(self, X, lengths=None):
-        """
-        Find most likely state sequence corresponding to ``X``.
-
-        Parameters
-        ----------
-        X : array-like, shape (n_samples, n_features)
-            Feature matrix of individual samples.
-        lengths : array-like of integers, shape (n_sequences, ), optional
-            Lengths of the individual sequences in ``X``. The sum of
-            these should be ``n_samples``.
-
-        Returns
-        -------
-        state_sequence : array, shape (n_samples, )
-            Labels for each sample from ``X``.
-        """
-        _, state_sequence = self.decode(X, lengths)
-        return state_sequence
-
-    def predict_proba(self, X, lengths=None):
-        """
-        Compute the posterior probability for each state in the model.
-
-        Parameters
-        ----------
-        X : array-like, shape (n_samples, n_features)
-            Feature matrix of individual samples.
-        lengths : array-like of integers, shape (n_sequences, ), optional
-            Lengths of the individual sequences in ``X``. The sum of
-            these should be ``n_samples``.
-
-        Returns
-        -------
-        posteriors : array, shape (n_samples, n_components)
-            State-membership probabilities for each sample from ``X``.
-        """
-        _, posteriors = self.score_samples(X, lengths)
-        return posteriors
 
     def sample(self, n_samples=1, random_state=None, currstate=None):
         """
@@ -348,13 +292,8 @@ class _AbstractHMM():
             _, Z = model.sample(n_samples=10)
             X, Z = model.sample(n_samples=10, currstate=Z[-1])
         """
-        # check_is_fitted(self, "startprob_")
-        # self._check()
-
         if random_state is None:
             random_state = self.random_state
-        # random_state = check_random_state(random_state)
-
         transmat_cdf = np.cumsum(self.transmat_, axis=1)
 
         if currstate is None:
@@ -396,19 +335,17 @@ class _AbstractHMM():
         self : object
             Returns self.
         """
-        # X = check_array(X)
 
         if lengths is None:
             lengths = np.asarray([X.shape[0]])
 
         self._init(X, lengths)
-        # self._check()
         self.monitor_._reset()
 
         for iter in range(self.n_iter):
             stats, curr_logprob = self._do_estep(X, lengths)
             # Compute lower bound before updating model parameters
-            lower_bound = self._compute_lower_bound(curr_logprob)
+            lower_bound = curr_logprob
 
             # XXX must be before convergence check, because otherwise
             #     there won't be any updates for the case ``n_iter=1``.
@@ -422,12 +359,6 @@ class _AbstractHMM():
                 _log.warning("Some rows of transmat_ have zero sum because no "
                              "transition from the state was ever observed.")
         return self
-
-    def _fit_scaling(self, X):
-        raise NotImplementedError("Must be overridden in subclass")
-
-    def _fit_log(self, X):
-        raise NotImplementedError("Must be overridden in subclass")
 
     def _compute_posteriors_scaling(self, fwdlattice, bwdlattice):
         posteriors = fwdlattice * bwdlattice
@@ -476,29 +407,6 @@ class _AbstractHMM():
             "m": nc * nf,
             "c":  nc * nf,
         }
-
-    def _check_sum_1(self, name):
-        """Check that an array describes one or more distributions."""
-        s = getattr(self, name).sum(axis=-1)
-        if not np.allclose(s, 1):
-            raise ValueError(
-                f"{name} must sum to 1 (got {s:.4f})"
-                if s.ndim == 0
-                else f"{name} rows must sum to 1 (got row sums of {s})"
-                    if s.ndim == 1
-                    else "Expected 1D or 2D array")
-
-    def _check(self):
-        """
-        Validate model parameters prior to fitting.
-
-        Raises
-        ------
-        ValueError
-            If any of the parameters are invalid, e.g. if :attr:`startprob_`
-            don't sum to 1.
-        """
-        raise NotImplementedError("Must be overridden in subclass")
 
     def _compute_likelihood(self, X):
         """
@@ -680,110 +588,11 @@ class _AbstractHMM():
         curr_logprob = 0
         for sub_X in utils.split_X_lengths(X, lengths):
             lattice, logprob, posteriors, fwdlattice, bwdlattice = impl(sub_X)
-            # Derived HMM classes will implement the following method to
-            # update their probability distributions, so keep
-            # a single call to this method for simplicity.
             self._accumulate_sufficient_statistics(
                 stats, sub_X, lattice, posteriors, fwdlattice,
                 bwdlattice)
             curr_logprob += logprob
         return stats, curr_logprob
-
-    # def _estep_begin(self):
-    #     pass
-
-    def _compute_lower_bound(self, curr_logprob):
-        raise NotImplementedError("Must be overridden in subclass")
-
-
-class BaseHMM(_AbstractHMM):
-    """
-    Base class for Hidden Markov Models learned from Expectation-Maximization.
-
-    This class allows for easy evaluation of, sampling from, and maximum a
-    posteriori estimation of the parameters of a HMM.
-
-    Attributes
-    ----------
-    monitor_ : ConvergenceMonitor
-        Monitor object used to check the convergence of EM.
-    startprob_ : array, shape (n_components, )
-        Initial state occupation distribution.
-    transmat_ : array, shape (n_components, n_components)
-        Matrix of transition probabilities between states.
-
-    Notes
-    -----
-    Normally, one should use a subclass of `.BaseHMM`, with its specialization
-    towards a given emission model.  In rare cases, the base class can also be
-    useful in itself, if one simply wants to generate a sequence of states
-    using `.BaseHMM.sample`.  In that case, the feature matrix will have zero
-    features.
-    """
-
-    def __init__(self, n_components=1,
-                 startprob_prior=1.0, transmat_prior=1.0,
-                 algorithm="viterbi", random_state=None,
-                 n_iter=10, tol=1e-2, verbose=False,
-                 implementation="log"):
-        """
-        Parameters
-        ----------
-        n_components : int
-            Number of states in the model.
-        startprob_prior : array, shape (n_components, ), optional
-            Parameters of the Dirichlet prior distribution for
-            :attr:`startprob_`.
-        transmat_prior : array, shape (n_components, n_components), optional
-            Parameters of the Dirichlet prior distribution for each row
-            of the transition probabilities :attr:`transmat_`.
-        algorithm : {"viterbi", "map"}, optional
-            Decoder algorithm.
-
-            - "viterbi": finds the most likely sequence of states, given all
-              emissions.
-            - "map" (also known as smoothing or forward-backward): finds the
-              sequence of the individual most-likely states, given all
-              emissions.
-        random_state: RandomState or an int seed, optional
-            A random number generator instance.
-        n_iter : int, optional
-            Maximum number of iterations to perform.
-        tol : float, optional
-            Convergence threshold. EM will stop if the gain in log-likelihood
-            is below this value.
-        verbose : bool, optional
-            Whether per-iteration convergence reports are printed to
-            :data:`sys.stderr`.  Convergence can also be diagnosed using the
-            :attr:`monitor_` attribute.
-        params, init_params : string, optional
-            The parameters that get updated during (``params``) or initialized
-            before (``init_params``) the training.  Can contain any combination
-            of 's' for startprob, 't' for transmat, and other characters for
-            subclass-specific emission parameters.  Defaults to all parameters.
-        implementation: string, optional
-            Determines if the forward-backward algorithm is implemented with
-            logarithms ("log"), or using scaling ("scaling").  The default is
-            to use logarithms for backwards compatability.  However, the
-            scaling implementation is generally faster.
-        """
-        super().__init__(
-            n_components=n_components, algorithm=algorithm,
-            random_state=random_state, n_iter=n_iter, tol=tol,
-            verbose=verbose,implementation=implementation)
-        self.startprob_prior = startprob_prior
-        self.transmat_prior = transmat_prior
-        self.monitor_ = ConvergenceMonitor(self.tol, self.n_iter, self.verbose)
-
-    def get_stationary_distribution(self):
-        """Compute the stationary distribution of states."""
-        # The stationary distribution is proportional to the left-eigenvector
-        # associated with the largest eigenvalue (i.e., 1) of the transition
-        # matrix.
-        # check_is_fitted(self, "transmat_")
-        eigvals, eigvecs = linalg.eig(self.transmat_.T)
-        eigvec = np.real_if_close(eigvecs[:, np.argmax(eigvals)])
-        return eigvec / eigvec.sum()
 
     def _fit_scaling(self, X):
         frameprob = self._compute_likelihood(X)
@@ -826,8 +635,8 @@ class BaseHMM(_AbstractHMM):
         self.transmat_ = np.where(self.transmat_ == 0, 0, transmat_)
         utils.normalize(self.transmat_, axis=1)
 
-    def _compute_lower_bound(self, curr_logprob):
-        return curr_logprob
+    # def _compute_lower_bound(self, curr_logprob):
+    #     return curr_logprob
 
     def _init(self, X, lengths=None):
         """
@@ -886,3 +695,52 @@ class BaseHMM(_AbstractHMM):
             raise ValueError(
                 "transmat_ must have shape (n_components, n_components)")
         self._check_sum_1("transmat_")
+
+    # def aic(self, X, lengths=None):
+    #     """
+    #     Akaike information criterion for the current model on the input X.
+
+    #     AIC = -2*logLike + 2 * num_free_params
+
+    #     https://en.wikipedia.org/wiki/Akaike_information_criterion
+
+    #     Parameters
+    #     ----------
+    #     X : array of shape (n_samples, n_dimensions)
+    #         The input samples.
+    #     lengths : array-like of integers, shape (n_sequences, )
+    #         Lengths of the individual sequences in ``X``. The sum of
+    #         these should be ``n_samples``.
+
+    #     Returns
+    #     -------
+    #     aic : float
+    #         The lower the better.
+    #     """
+    #     n_params = sum(self._get_n_fit_scalars_per_param().values())
+    #     return -2 * self.score(X, lengths=lengths) + 2 * n_params
+
+    # def bic(self, X, lengths=None):
+    #     """
+    #     Bayesian information criterion for the current model on the input X.
+
+    #     BIC = -2*logLike + num_free_params * log(num_of_data)
+
+    #     https://en.wikipedia.org/wiki/Bayesian_information_criterion
+
+    #     Parameters
+    #     ----------
+    #     X : array of shape (n_samples, n_dimensions)
+    #         The input samples.
+    #     lengths : array-like of integers, shape (n_sequences, )
+    #         Lengths of the individual sequences in ``X``. The sum of
+    #         these should be ``n_samples``.
+
+    #     Returns
+    #     -------
+    #     bic : float
+    #         The lower the better.
+    #     """
+    #     n_params = sum(self._get_n_fit_scalars_per_param().values())
+    #     return -2 * self.score(X, lengths=lengths) + n_params * np.log(len(X))
+

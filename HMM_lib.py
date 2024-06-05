@@ -1,6 +1,7 @@
 import numpy as np
 import librosa
 from my_hmmlearn import hmm
+# from hmmlearn import hmm as hmm_lib
 from sklearn.preprocessing import StandardScaler
 import os
 import pickle
@@ -8,7 +9,7 @@ import mfcc
 
 
 # Function to extract MFCC features
-def extract_mfcc(audio_path, sample_rate =16000, n_mfcc=13):
+def extract_mfcc(audio_path, sample_rate =22050, n_mfcc=13):
     y, sr = librosa.load(audio_path, sr=None)
     mfcc_features = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
     mfcc_scaled = StandardScaler().fit_transform(mfcc_features.T)
@@ -36,7 +37,7 @@ def train_hmm(models, audio_files, labels, sample_rate):
 
         # Save the model
         model_dir = "SavedModels"
-        model_path = os.path.join(model_dir, f'{label}_hmm_model0406.pkl')
+        model_path = os.path.join(model_dir, f'{label}_hmm_model_0406.pkl')
         with open(model_path, 'wb') as f:
             pickle.dump(model, f)
         print(f'Model for {label} saved at {model_path}')
@@ -63,23 +64,28 @@ models = {}
 def load_models(model_dir='models'):
     models = {}
     for file in os.listdir(model_dir):
-        if file.endswith('_hmm_model0206.pkl'):
-            label = file.replace('_hmm_model0206.pkl', '')
+        if file.endswith('_hmm_model_0406.pkl'):
+            label = file.replace('_hmm_model_0406.pkl', '')
             model_path = os.path.join(model_dir, file)
             with open(model_path, 'rb') as f:
+                # print(f)
                 models[label] = pickle.load(f)
-            print(f'Model for {label} loaded from {model_path}')
+                # print(models[label])
+            if not models:
+                raise ValueError("No models available for recognition.")
+            else:
+                print(f'Model for {label} loaded from {model_path}')
     return models
 
 use_trained_models = False
 
 if use_trained_models:
-    loaded_models = load_models("SavedModels")
+    models = load_models("SavedModels")
 else:
     train_hmm(models, audio_files, labels, sample_rate)
 
 
 # Recognize a new audio file
-new_audio_path = 'cleaned_audios/stop_music_2.wav'
+new_audio_path = 'cleaned_audios/start_music_2.wav'
 recognized_label = recognize(models, new_audio_path, sample_rate)
 print(f'Recognized as: {recognized_label}')

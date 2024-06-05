@@ -266,13 +266,13 @@ def viterbi(log_startprob, log_transmat, log_frameprob):
     return log_prob, state_sequence
 
 
-def logdet(a):
-    sign, logdet = np.linalg.slogdet(a)
-    if (sign < 0).any():
-        warnings.warn("invalid value encountered in log", RuntimeWarning)
-        return np.where(sign < 0, np.nan, logdet)
-    else:
-        return logdet
+# def logdet(a):
+#     sign, logdet = np.linalg.slogdet(a)
+#     if (sign < 0).any():
+#         warnings.warn("invalid value encountered in log", RuntimeWarning)
+#         return np.where(sign < 0, np.nan, logdet)
+#     else:
+#         return logdet
 
 
 def split_X_lengths(X, lengths):

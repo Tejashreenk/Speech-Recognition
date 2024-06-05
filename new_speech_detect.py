@@ -471,39 +471,6 @@ class AudioMonitor:
             else:
                 return signal
         
-'''if __name__ == "__main__":
-    # List all available devices
-    devices = sd.query_devices()
-    print(devices)
-    print(matplotlib.get_backend())
-    i = 0
-    device_id = 0  # Microphone
-    sampling_freq = 10000 # 10KHz
-    window = 10 # 10 ms
-    recording_filenames = ["recording31","recording32","recording33","recording34","recording35","recording36","recording37"]
-    directory = "HW2"
-    audio_analysis_window = 1000
-    for audio in recording_filenames:
-        record_save_audio(2,f"{directory}/recordings/{audio}")
-        # recording = "audio"
-        signal = play_recording(f"{directory}/recordings/{audio}")
-        display_speech_signal(signal,f"{directory}/plot/audio_{audio}")
-
-        LR_monitor = AudioMonitor_LamelRabiner(device=0, block_duration_ms=window)
-        adjusted_log_energy = LR_monitor.process_saved_audio(signal)
-        LR_monitor.plot_data(adjusted_log_energy,f"{directory}/plot/LR_{audio}")
-
-        # Bandpass filter - 100 Hz = low frequency 4000 Hz = high frequency
-        # Assumption first 100ms has no speech
-
-        monitor = AudioMonitor(device=0, block_duration_ms=window)
-        # monitor.start()
-
-        monitor.start_saved_audio(signal,audio_analysis_window)
-        monitor.plot_data(f"{directory}/plot/{audio}")
-        monitor.plot_spectrogram(f"{audio}",signal)
-'''
-
 # Background thread to record audio continuously
 # Chunk the audio in 2 ms chunks
 # process the chunks on mainthread
