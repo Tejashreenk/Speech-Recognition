@@ -1,6 +1,6 @@
 import numpy as np
 import librosa
-from hmmlearn import hmm
+from my_hmmlearn import hmm
 from sklearn.preprocessing import StandardScaler
 import os
 import pickle
@@ -9,8 +9,8 @@ import mfcc
 
 # Function to extract MFCC features
 def extract_mfcc(audio_path, sample_rate, n_mfcc=13):
-    y, sr = librosa.load(audio_path, sr=sample_rate)
-    mfcc_features = librosa.feature.mfcc(y=y, sr=sample_rate, n_mfcc=n_mfcc)
+    y, sr = librosa.load(audio_path, sr=None)
+    mfcc_features = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
     mfcc_scaled = StandardScaler().fit_transform(mfcc_features.T)
     return mfcc_scaled
 
@@ -23,20 +23,24 @@ def extract_mfcc_calc(audio_path, sample_rate, n_mfcc=13):
     return mfcc_scaled
 
 # Train HMM model
-def train_hmm(models,model_name, audio_files, labels, sample_rate, i =  0):
+def train_hmm(models, audio_files, labels, sample_rate, i = -1):
     print("Training started ...")
     for label in np.unique(labels):
-        training_data = [extract_mfcc(audio_files[i], sample_rate) for i in range(len(labels)) if labels[i] == label]
+        training_data = [extract_mfcc_calc(audio_files[i], sample_rate) for i in range(len(labels)) if labels[i] == label]
         lengths = [len(x) for x in training_data]
         training_data = np.vstack(training_data)
 
-        model = hmm.GaussianHMM(n_components=3,tol=1e-4, n_iter=2000,implementation="log",verbose=True)
+        model = hmm.MyGaussianHMM(n_components=3,tol=1e-4, n_iter=2000,implementation="scaling",verbose=True)
         model.fit(training_data, lengths)
         models[label] = model
 
         # Save the model
         model_dir = "SavedModels"
-        model_path = os.path.join(model_dir, f'{label}{model_name}')
+        if i == -1:
+            model_path = os.path.join(model_dir, f'{label}_hmm_model.pkl')
+        else:
+            model_path = os.path.join(model_dir, f'{label}_{i}_hmm_model.pkl')
+
         with open(model_path, 'wb') as f:
             pickle.dump(model, f)
         print(f'Model for {label} saved at {model_path}')
@@ -52,7 +56,7 @@ def recognize_lib(models, audio_path, sample_rate):
     scores = {label: model.score(mfcc_features) for label, model in models.items()}
     return max(scores, key=scores.get)
 
-def train_using_all_files(model_name):
+def train_using_all_files():
     audio_files = []
     labels = []
     sample_rate = 22050
@@ -62,13 +66,13 @@ def train_using_all_files(model_name):
         for i in range(25):
             audio_files.append(f"{directory}/{filename}_{i+1}.wav")
             labels.append(filename)
-    train_hmm(models,model_name, audio_files, labels, sample_rate)
+    train_hmm(models, audio_files, labels, sample_rate)
 
-def load_models(model_name, model_dir='models'):
+def load_models(model_dir='models'):
     models = {}
     for file in os.listdir(model_dir):
-        if file.endswith(f'{model_name}'):
-            label = file.replace(f'{model_name}', '')
+        if file.endswith('_hmm_model.pkl'):
+            label = file.replace('_hmm_model.pkl', '')
             model_path = os.path.join(model_dir, file)
             with open(model_path, 'rb') as f:
                 # print(f)
@@ -144,13 +148,13 @@ def test_trained_model(models,directory,sample_rate):
 
         for sample in test_set:
             sample = sample.replace('\n','')
-            recognized_label = recognize_lib(models, f'{directory}/{sample}', sample_rate)
+            recognized_label = recognize(models, f'{directory}/{sample}', sample_rate)
             sample = sample.replace('.wav','')
             X_test.append(recognized_label)
             label = sample.split('_')[-1]
             y_test.append(sample.replace(f'_{str(label)}',''))
-            # print(recognized_label)
-            # print(X_test[-1])
+            print(y_test[-1])
+            print(recognized_label)
             if X_test[-1]==y_test[-1]:
                 correct_test += 1
             else:
@@ -172,11 +176,11 @@ if __name__ == "__main__":
     use_trained_models = False
     # Train models
     models = {}
-    model_name = "_hmm_model_lib.pkl"
+
     if use_trained_models:
-        models = load_models(model_name,"SavedModels")
+        models = load_models("SavedModels")
     else:
-        train_using_all_files(model_name)
+        train_using_all_files()
 
     test_trained_model(models,directory = "cleaned_audios_3005",sample_rate = 22050)
 

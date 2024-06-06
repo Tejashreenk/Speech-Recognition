@@ -11,6 +11,7 @@ import librosa
 import SpeechUtil as su
 import os
 import pickle
+import HMM_final
 import HMM_lib
 # matplotlib.use('png')
 
@@ -76,7 +77,7 @@ class AudioMonitor:
         energy = energy
         # Step 2: Compute IMX, IMN
         IMX = np.max(energy)
-        if IMX<3:
+        if IMX<4.5:
             # The audio is noise
             return True
         else:
@@ -197,7 +198,7 @@ class AudioMonitor:
         # Step 2: Compute IMX, IMN
         IMX, IMN = np.max(energy), np.min(energy)
 
-        if IMX<3:
+        if IMX<4.5:
             # The audio is noise
             return [[[0,0,0,0]], IMX, 0, 0 ]
         # Step 3: Compute thresholds ITL, ITU
@@ -526,7 +527,7 @@ def process_audio(i,is_livestream,directory):
             #     su.save_signal(np.array(audio_sg).flatten(),f"cleaned_audios/audio_{j}",SAMPLE_RATE)
             #     audio_sg=[]
             # get_cleaned_audio(i,"")
-            print("No audio data received for processing.")
+            print("No audio data")
 
 # def process_recorded_audio(i,is_livestream):
 #     """Process audio chunks from the queue."""
@@ -552,7 +553,7 @@ def process_chunk(chunk,i,directory,is_livestream = True):
     """Process an individual chunk of audio data."""
     monitor = AudioMonitor(device=0, fs=SAMPLE_RATE)
     thresholds = monitor.start_saved_audio(chunk)
-    # print(f"thresholds {i} : {thresholds}")
+    print(f"thresholds {i} : {thresholds}")
     # monitor.plot_data_new(f"plot/audio_{i}")
     # monitor.plot_spectrogram(f"{audio}",signal)
     filename = f"audio_{i}"
@@ -566,7 +567,7 @@ def process_chunk(chunk,i,directory,is_livestream = True):
         # silence detected
         silence_count += 1
     # print(silence_count)
-    if is_livestream and silence_count>1:
+    if is_livestream and silence_count>0:
         get_cleaned_audio(i,filename,directory)
         silence_count=0
     # else:
@@ -594,24 +595,25 @@ def get_cleaned_audio(j,filename,directory):
         # print(f"Combined audio saved as {directory}/{filename}.wav")
         recognized_label = HMM_lib.recognize_lib(loaded_models, f"{directory}/{filename}.wav",SAMPLE_RATE)
         print(f'Recognized as: {recognized_label}')
-    else:
-        print("No audio chunks were processed.")
+    # else:
+        # print("No audio chunks were processed.")
 
-def load_models(model_dir='models'):
+def load_models(model_path,model_dir='models'):
     models = {}
     for file in os.listdir(model_dir):
-        if file.endswith('_hmm_model_lib.pkl'):
-            label = file.replace('_hmm_model_lib.pkl', '')
-            model_path = os.path.join(model_dir, file)
-            with open(model_path, 'rb') as f:
+        if file.endswith(f'{model_path}'):
+            label = file.replace(f'{model_path}', '')
+            curr_model_path = os.path.join(model_dir, file)
+            with open(curr_model_path, 'rb') as f:
                 models[label] = pickle.load(f)
-            print(f'Model for {label} loaded from {model_path}')
+            print(f'Model for {label} loaded from {curr_model_path}')
     return models
 
 if __name__ == "__main__":
     is_livestream = True
+    model_path = "_hmm_model_lib.pkl"
     # Load models
-    loaded_models = load_models("SavedModels")
+    loaded_models = load_models(model_path,"SavedModels")
     clean_audio_directory = "cleaned_audios_3005"
     # Recognize a new audio file
 

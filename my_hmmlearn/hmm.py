@@ -55,7 +55,7 @@ class ConvergenceMonitor:
         precision = np.finfo(float).eps ** (1/2)
         if self.history and (log_prob - self.history[-1]) < -precision:
             delta = log_prob - self.history[-1]
-            _log.warning(f"Model is not converging.  Current: {log_prob}"
+            print(f"Model is not converging.  Current: {log_prob}"
                          f" is not greater than {self.history[-1]}."
                          f" Delta is {delta}")
         self.history.append(log_prob)
@@ -134,7 +134,7 @@ class MyGaussianHMM():
                 cv, self.covariance_type, self.n_components).copy()
 
     def compute_log_likelihood(self, X):
-        likelihood = self._compute_likelihood(X)
+        likelihood = self.compute_likelihood(X)
         with np.errstate(divide="ignore"):
             return np.log(likelihood)
 
