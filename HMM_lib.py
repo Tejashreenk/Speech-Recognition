@@ -47,6 +47,11 @@ def recognize(models, audio_path, sample_rate):
     scores = {label: model.score(mfcc_features) for label, model in models.items()}
     return max(scores, key=scores.get)
 
+def recognize_lib(models, audio_path, sample_rate):
+    mfcc_features = extract_mfcc(audio_path, sample_rate )
+    scores = {label: model.score(mfcc_features) for label, model in models.items()}
+    return max(scores, key=scores.get)
+
 def train_using_all_files():
     audio_files = []
     labels = []
@@ -162,6 +167,7 @@ def train_models_with_audiofiles(X_train_fold,y_train_fold,sample_rate):
         y_train = y_train_fold[i]
     train_hmm(models, X_train, y_train, sample_rate, i)
 
+'''
 use_trained_models = True
 # Train models
 models = {}
@@ -172,3 +178,4 @@ else:
     train_using_all_files()
 
 test_trained_model(models)
+'''

@@ -556,7 +556,7 @@ def process_chunk(chunk,i,directory,is_livestream = True):
     # monitor.plot_data_new(f"plot/audio_{i}")
     # monitor.plot_spectrogram(f"{audio}",signal)
     filename = f"audio_{i}"
-    if len(thresholds)>0 and len(thresholds[0])>0:
+    if len(thresholds)>0 and len(thresholds[0])>0 and thresholds[0][0][-1]>0:
         # audio_sg=(monitor.combine_audio_simple(chunk, thresholds[0],SAMPLE_RATE))
         audio_sg=(monitor.combine_audio(chunk, thresholds[0],SAMPLE_RATE))
         # su.save_signal(audio_sg,f"cleaned_audios/audio_{j}",SAMPLE_RATE)
@@ -565,7 +565,7 @@ def process_chunk(chunk,i,directory,is_livestream = True):
     else:
         # silence detected
         silence_count += 1
-    
+    # print(silence_count)
     if is_livestream and silence_count>1:
         get_cleaned_audio(i,filename,directory)
         silence_count=0
@@ -592,7 +592,7 @@ def get_cleaned_audio(j,filename,directory):
         combined_audio = np.concatenate(chunks)  # Use concatenate for better performance with NumPy arrays
         su.save_signal(combined_audio, f"{directory}/{filename}", SAMPLE_RATE)
         # print(f"Combined audio saved as {directory}/{filename}.wav")
-        recognized_label = HMM_lib.recognize(loaded_models, f"{directory}/{filename}.wav")
+        recognized_label = HMM_lib.recognize_lib(loaded_models, f"{directory}/{filename}.wav",SAMPLE_RATE)
         print(f'Recognized as: {recognized_label}')
     else:
         print("No audio chunks were processed.")
@@ -600,8 +600,8 @@ def get_cleaned_audio(j,filename,directory):
 def load_models(model_dir='models'):
     models = {}
     for file in os.listdir(model_dir):
-        if file.endswith('_hmm_model.pkl'):
-            label = file.replace('_hmm_model.pkl', '')
+        if file.endswith('_hmm_model_lib.pkl'):
+            label = file.replace('_hmm_model_lib.pkl', '')
             model_path = os.path.join(model_dir, file)
             with open(model_path, 'rb') as f:
                 models[label] = pickle.load(f)
