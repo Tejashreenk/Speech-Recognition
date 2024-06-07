@@ -13,7 +13,12 @@ import os
 import pickle
 import HMM_final
 import HMM_lib
-# matplotlib.use('png')
+import subprocess
+import pyautogui
+import datetime
+
+
+
 
 # Queue to hold data for plotting
 data_queue = Queue()
@@ -479,7 +484,7 @@ class AudioMonitor:
 # Constants
 CHANNELS = 1  # Mono audio
 CHUNK_SIZE_TIME = 1
-SAMPLE_RATE = 22050#16000##44100 # Sample rate in Hz
+SAMPLE_RATE = 22050#16000#44100 # Sample rate in Hz
 CHUNK_SIZE = int(SAMPLE_RATE * CHUNK_SIZE_TIME)  # 2 s chunk size at 44100 Hz
 audio_sg = []
 silence_count = 0
@@ -553,7 +558,7 @@ def process_chunk(chunk,i,directory,is_livestream = True):
     """Process an individual chunk of audio data."""
     monitor = AudioMonitor(device=0, fs=SAMPLE_RATE)
     thresholds = monitor.start_saved_audio(chunk)
-    print(f"thresholds {i} : {thresholds}")
+    # print(f"thresholds {i} : {thresholds}")
     # monitor.plot_data_new(f"plot/audio_{i}")
     # monitor.plot_spectrogram(f"{audio}",signal)
     filename = f"audio_{i}"
@@ -595,6 +600,8 @@ def get_cleaned_audio(j,filename,directory):
         # print(f"Combined audio saved as {directory}/{filename}.wav")
         recognized_label = HMM_lib.recognize_lib(loaded_models, f"{directory}/{filename}.wav",SAMPLE_RATE)
         print(f'Recognized as: {recognized_label}')
+        perform_action(str(recognized_label))
+
     # else:
         # print("No audio chunks were processed.")
 
@@ -609,7 +616,111 @@ def load_models(model_path,model_dir='models'):
             print(f'Model for {label} loaded from {curr_model_path}')
     return models
 
+def perform_action(recognized_label):
+    actions = {
+        "odessa": odessa_action,
+              "what_time_is_it":what_time_is_it_action,
+              "play_music":play_music_action,
+              "stop_music":stop_music_action,
+              "turn_on_the_lights":turn_on_the_lights_action,
+              "turn_off_the_lights":turn_off_the_lights_action,
+    }
+
+    # Check if the recognized label is in the dictionary of actions
+    if recognized_label == "odessa":
+        actions[recognized_label]()
+    elif recognized_label in actions:
+        global odessa_detected
+        print(f"{odessa_detected} {recognized_label}")
+        # Call the function corresponding to the recognized label
+        if odessa_detected == True:
+            odessa_detected = False
+            actions[recognized_label]()
+    else:
+        # Print a message if the label is not recognized
+        print(f"No action found for: {recognized_label}")
+
+def odessa_action():
+    global odessa_detected
+    odessa_detected = True
+    print(f"Listening...")
+
+def what_time_is_it_action():
+    print("what_time_is_it_action")
+    # Get the current local datetime
+    now = datetime.datetime.now()
+    # Format the time as a string
+    time_string = now.strftime("%H %M %p")
+    # Create a command to speak the time
+    speak_command = f'say "The current time is {time_string}"'
+    # Execute the command
+    os.system(speak_command)
+
+
+def play_music_action():
+    print("play_music_action")
+    applescript= """
+                tell application "Music"
+                    play some track of playlist "Odessa"
+                end tell
+                """
+    process = subprocess.run(['osascript', '-e', applescript], text=True, capture_output=True)
+
+    # Check if the script was successful
+    if process.returncode != 0:
+        print("Script failed")
+        print("Error:", process.stderr)
+
+def stop_music_action():
+    # Simulate pressing the media play/pause key
+    applescript= """
+                tell application "Music" 
+                    pause
+                end tell
+                """
+    process = subprocess.run(['osascript', '-e', applescript], text=True, capture_output=True)
+
+    # Check if the script was successful
+    if process.returncode != 0:
+        print("Script failed")
+        print("Error:", process.stderr)
+
+def turn_on_the_lights_action():
+    applescript = """
+                    tell application "System Events"
+                        tell appearance preferences
+                            set dark mode to false
+                        end tell
+                    end tell
+                    """
+    process = subprocess.run(['osascript', '-e', applescript], text=True, capture_output=True)
+
+    # Check if the script was successful
+    if process.returncode != 0:
+        print("Script failed")
+        print("Error:", process.stderr)
+
+def turn_off_the_lights_action():
+    # print("wait for next command")
+    applescript = """
+                    tell application "System Events"
+                        tell appearance preferences
+                            set dark mode to true
+                        end tell
+                    end tell
+                    """
+    process = subprocess.run(['osascript', '-e', applescript], text=True, capture_output=True)
+
+    # Check if the script was successful
+    if process.returncode != 0:
+        print("Script failed")
+        print("Error:", process.stderr)
+
+
+
 if __name__ == "__main__":
+    odessa_detected = False
+
     is_livestream = True
     model_path = "_hmm_model_lib.pkl"
     # Load models
